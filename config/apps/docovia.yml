@@ -1,0 +1,15 @@
+id: docovia
+repo: git@github.com:getsprung/app
+main_path: /home/bot/repos/sprung-app
+worktree_root: /home/bot/repos/sprung-worktrees
+domain: docovia.tars.achan.bot
+base_port: 3100
+port_count: 99
+database_prefix: sprung_dev_worktree
+env_shared_path: /home/bot/repos/sprung-app/.env.local
+pguser: bot
+processes:
+  web: bundle exec rails s -p {port} -b "ssl://0.0.0.0?key=app.key&cert=app.crt"
+  worker: bundle exec rails jobs:work
+  assets: env DASHBOARD_DOMAIN=0.0.0.0 bin/webpack-dev-server
+  agent: claude

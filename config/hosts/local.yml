@@ -1,0 +1,19 @@
+id: local
+ssh_target: local
+local: true
+user: achan
+service_user: achan
+base_repo_path: /Users/achan/repos
+registry_dir: /Users/achan/.local/share/tesseract/registry
+cert_dir: /Users/achan/.local/share/tesseract/certs
+services_compose_path: /Users/achan/.config/tesseract/services/compose.yml
+services:
+  postgres:
+    image: pgvector/pgvector:pg14
+    port: 5432
+    user: achan
+    password: dev
+  redis:
+    image: redis:7-alpine
+    port: 6379
+    databases: 256

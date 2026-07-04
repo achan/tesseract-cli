@@ -1,0 +1,18 @@
+id: tars
+ssh_target: tars
+user: bot
+service_user: achan
+base_repo_path: /home/bot/repos
+registry_dir: /home/bot/.local/share/tesseract/registry
+cert_dir: /home/bot/.local/share/tesseract/certs
+services_compose_path: /home/achan/.config/tesseract/services/compose.yml
+services:
+  postgres:
+    image: pgvector/pgvector:pg14
+    port: 5432
+    user: bot
+    password: dev
+  redis:
+    image: redis:7-alpine
+    port: 6379
+    databases: 256

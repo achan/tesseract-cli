@@ -6,8 +6,9 @@ This document describes the intended development architecture for doing primary
 full-stack Rails work from this MacBook while running coding agents and app
 processes on remote machines.
 
-This is documentation only. It does not implement scripts, change DNS, install
-packages, bootstrap hosts, or create any runtime configuration.
+The repository implements the first version of this architecture as the
+`tesseract` CLI. Commands are designed to be idempotent where practical and to
+keep host-specific behavior behind explicit host and app profiles.
 
 ## Machine Roles
 
@@ -90,7 +91,10 @@ A host profile describes a machine that can run development workloads.
 For `tars`, the profile should eventually include:
 
 - Host id: `tars`
-- SSH target: `tars`
+- SSH target: `bot@tars`
+- Default user: `bot`, configurable per host profile
+- Service user: `achan`, configurable per host profile, used for Docker-backed
+  host services
 - Role: default Rails and coding-agent execution host
 - Tailscale identity and IP
 - Base repo path: `~/repos`
@@ -169,6 +173,9 @@ Worktrees share these server processes but use separate databases and Redis DB
 indexes.
 
 This avoids per-worktree Compose overhead while keeping app data separated.
+The runtime user `bot` should not be a member of the Docker group. Docker access
+is effectively root on the host, so service management is delegated to the
+separate `service_user` instead.
 
 ## Ports, Databases, and Redis
 
@@ -227,14 +234,12 @@ Example profile values:
 
 - App id: `docovia`
 - Git remote: `git@github.com:getsprung/app`
-- Main path on `tars`: `~/repos/sprung-app`
-- Worktree root on `tars`: `~/repos/sprung-worktrees`
+- Main path on `tars`: `/home/bot/repos/sprung-app`
+- Worktree root on `tars`: `/home/bot/repos/sprung-worktrees`
 - Development domain: `docovia.tars.achan.bot`
 - Base port: `3100`
 - Example worktree port range: `3101-3199`
-- Runtime Ruby version: `3.4.2`
-- Runtime Node version: `22.22.0`
-- Yarn version: `1.22.x`
+- Runtime versions: read from repo files such as `.ruby-version` and `.nvmrc`
 
 Example browser URLs for a worktree on port `3101`:
 
@@ -253,7 +258,7 @@ APP_PORT=:3101
 PORT=3101
 DATABASE_NAME=sprung_dev_worktree_no_show
 PGHOST=127.0.0.1
-PGUSER=achan
+PGUSER=bot
 REDIS_URL=redis://127.0.0.1:6379/1
 WEBSITE_URL=https://app.docovia.tars.achan.bot:3101
 API_URL=https://api.docovia.tars.achan.bot:3101
@@ -270,8 +275,7 @@ claude
 
 ## Intended Command Surface
 
-The command names below describe the desired interface. They are not implemented
-yet.
+The command names below describe the implemented first-pass interface.
 
 ```bash
 tesseract doctor [--host tars]
@@ -281,8 +285,9 @@ tesseract services down [--host tars]
 tesseract services logs [--host tars]
 
 tesseract app list [--host tars]
-tesseract app doctor <app> [--host tars]
 tesseract app clone <app> [--host tars]
+tesseract app doctor <app> [--host tars]
+tesseract app setup <app> [--host tars]
 
 tesseract worktree create <app> <slug> [branch] [--host tars]
 tesseract worktree start <app> <slug> [--host tars]
@@ -292,26 +297,15 @@ tesseract worktree remove <app> <slug> [--host tars]
 
 tesseract dns sync <app> [--host tars]
 tesseract dns doctor <app> [--host tars]
+
+tesseract cert doctor <app> [--host tars]
+tesseract cert issue <app> [--host tars]
+tesseract cert renew <app> [--host tars]
 ```
-
-## Out of Scope
-
-The following are intentionally out of scope for this document-only phase:
-
-- Implementing `tesseract`
-- Creating executable scripts
-- Installing packages on the MacBook, `tars`, or `case`
-- Changing DNS records
-- Creating TLS certificates
-- Starting Docker services
-- Cloning repositories to `tars`
-- Creating worktrees or databases
-- Designing the detailed `case` workflow
 
 ## Acceptance Checklist
 
-This architecture is ready for implementation planning when the document clearly
-captures:
+The implementation should continue to satisfy these architectural requirements:
 
 - MacBook as control plane
 - `tars` as default execution host
@@ -325,4 +319,3 @@ captures:
 - Per-worktree isolation through worktrees, ports, databases, Redis DBs, env
   overrides, and tmux sessions
 - 1Password-based secret generation
-- Documentation-only scope

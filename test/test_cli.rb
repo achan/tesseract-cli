@@ -219,6 +219,79 @@ class CLITest < Minitest::Test
     ENV["CLOUDFLARE_API_TOKEN"] = old_token if old_token
   end
 
+  def test_dns_sync_requires_cloudflare_token
+    old_token = ENV.delete("CLOUDFLARE_API_TOKEN")
+
+    status, _stdout, stderr = run_cli("--host", "tars", "dns", "sync", "flexday")
+
+    assert_equal 1, status
+    assert_includes stderr, "CLOUDFLARE_API_TOKEN is required for dns sync"
+  ensure
+    ENV["CLOUDFLARE_API_TOKEN"] = old_token if old_token
+  end
+
+  def test_dns_sync_upserts_configured_cloudflare_records
+    old_token = ENV["CLOUDFLARE_API_TOKEN"]
+    ENV["CLOUDFLARE_API_TOKEN"] = "test-token"
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "dns", "sync", "flexday"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "CF_TOKEN='test-token'"
+    assert_includes script, "ZONE_NAME='achan.bot'"
+    assert_includes script, "tailscale ip -4"
+    assert_includes script, "https://api.cloudflare.com/client/v4/zones?name=$ZONE_NAME"
+    assert_includes script, "flexday.tars.achan.bot"
+    refute_includes script, "*.flexday.tars.achan.bot"
+    assert_empty stderr.string
+  ensure
+    if old_token
+      ENV["CLOUDFLARE_API_TOKEN"] = old_token
+    else
+      ENV.delete("CLOUDFLARE_API_TOKEN")
+    end
+  end
+
+  def test_dns_sync_docovia_includes_wildcard_record
+    old_token = ENV["CLOUDFLARE_API_TOKEN"]
+    ENV["CLOUDFLARE_API_TOKEN"] = "test-token"
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "dns", "sync", "docovia"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "docovia.tars.achan.bot"
+    assert_includes script, "*.docovia.tars.achan.bot"
+    assert_empty stderr.string
+  ensure
+    if old_token
+      ENV["CLOUDFLARE_API_TOKEN"] = old_token
+    else
+      ENV.delete("CLOUDFLARE_API_TOKEN")
+    end
+  end
+
   def test_cert_issue_uses_acme_dns_challenge_and_installs_to_host_cert_dir
     old_token = ENV["CLOUDFLARE_API_TOKEN"]
     ENV["CLOUDFLARE_API_TOKEN"] = "test-token"

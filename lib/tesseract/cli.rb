@@ -599,12 +599,16 @@ EOF
           echo "expected_host=#{host.id}"
           printf "host_tailscale_ip="
           tailscale ip -4 2>/dev/null | head -n1 || true
-          echo "domain_a=$(dig +short #{Shell.escape(profile.domain)} A 2>/dev/null | tr '\\n' ' ')"
-          echo "wildcard_a=$(dig +short app.#{Shell.escape(profile.domain)} A 2>/dev/null | tr '\\n' ' ')"
+          while IFS= read -r record; do
+            [ -n "$record" ] || continue
+            value=$(dig +short "$record" A 2>/dev/null | tr '\\n' ' ')
+            echo "record_a[$record]=$value"
+          done <<'EOF'
+#{profile.dns_records.join("\n")}
+EOF
         SH
       when "sync"
-        @stderr.puts("error: dns sync is not implemented yet; configure #{profile.domain} and *.#{profile.domain} to point at #{host.id}'s Tailscale IP")
-        1
+        dns_sync(profile)
       else
         usage("unknown dns action: #{action}")
       end

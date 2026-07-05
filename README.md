@@ -10,20 +10,16 @@ services run as `achan` through the host profile's `service_user`.
 
 - SSH access to `bot@tars` and `achan@tars`.
 - Tailscale on the machine used to open the app.
-- Cloudflare DNS for `achan.bot` with DNS-only A records:
-
-```text
-docovia.tars.achan.bot    100.101.231.49
-*.docovia.tars.achan.bot  100.101.231.49
-```
-
 - A Cloudflare API token with `Zone:Read` and `DNS:Edit` for `achan.bot`.
-  `bin/tesseract cert issue` reads it from `CLOUDFLARE_API_TOKEN`.
+  `bin/tesseract dns sync` and `bin/tesseract cert issue` read it from
+  `CLOUDFLARE_API_TOKEN`.
 
-If the token is assigned in `~/.zshrc` without `export`, run cert commands
+If the token is assigned in `~/.zshrc` without `export`, run DNS and cert commands
 through zsh:
 
 ```bash
+zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync docovia --host tars'
+zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync flexday --host tars'
 zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract cert issue docovia --host tars'
 ```
 
@@ -35,7 +31,10 @@ Postgres/Redis:
 ```bash
 bin/tesseract bootstrap --host tars
 bin/tesseract services up --host tars
+bin/tesseract dns sync docovia --host tars
+bin/tesseract dns sync flexday --host tars
 bin/tesseract dns doctor docovia --host tars
+bin/tesseract dns doctor flexday --host tars
 ```
 
 `dns doctor` should show `host_tailscale_ip=100.101.231.49`. Some resolvers on

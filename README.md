@@ -72,6 +72,28 @@ bin/tesseract app clone docovia --host tars
 bin/tesseract app setup docovia --host tars
 ```
 
+## Clone Flexday
+
+Flexday is also managed as an offloaded project on `tars`.
+
+```bash
+bin/tesseract app clone flexday --host tars
+```
+
+Seed the shared Flexday env file once from the existing `subot` checkout. This
+is an operator step, not part of the tesseract scripts:
+
+```bash
+scp /Users/achan-bot/repos/flexday/.env.local bot@tars:/home/bot/repos/flexday/.env.local
+ssh bot@tars 'chmod 0600 /home/bot/repos/flexday/.env.local'
+```
+
+Then install the configured Node/pnpm runtime and dependencies:
+
+```bash
+bin/tesseract app setup flexday --host tars
+```
+
 ## Shared App Environment
 
 Docovia expects a shared app env file at:
@@ -124,10 +146,11 @@ chmod 0600 /home/bot/repos/sprung-app/.env.local'
 
 ## Worktrees
 
-Create a worktree:
+Create Docovia and Flexday worktrees with the same command shape:
 
 ```bash
 bin/tesseract worktree create docovia smoke-test --host tars
+bin/tesseract worktree create flexday smoke-test --host tars
 ```
 
 Prepare the app dependencies and database:
@@ -151,6 +174,9 @@ Start the worktree:
 ```bash
 bin/tesseract worktree start docovia smoke-test --host tars
 bin/tesseract worktree status docovia smoke-test --host tars
+
+bin/tesseract worktree start flexday smoke-test --host tars
+bin/tesseract worktree status flexday smoke-test --host tars
 ```
 
 Expected service panes:
@@ -173,6 +199,7 @@ Open:
 
 ```text
 https://app.docovia.tars.achan.bot:3101
+http://flexday.tars.achan.bot:4001
 ```
 
 Verify from the control machine:

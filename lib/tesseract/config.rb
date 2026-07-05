@@ -120,7 +120,8 @@ module Tesseract
 
   class AppProfile
     attr_reader :id, :repo, :main_path, :worktree_root, :domain, :base_port,
-      :port_count, :database_prefix, :env_shared_path, :pguser
+      :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
+      :setup_commands, :env_overrides, :url_template, :dns_zone
 
     def initialize(data)
       @id = required(data, "id")
@@ -130,10 +131,25 @@ module Tesseract
       @domain = required(data, "domain")
       @base_port = Integer(required(data, "base_port"))
       @port_count = Integer(data.fetch("port_count", 99))
-      @database_prefix = required(data, "database_prefix")
+      @database_enabled = data.fetch("database", true)
+      @database_prefix = @database_enabled ? required(data, "database_prefix") : data.fetch("database_prefix", "")
       @env_shared_path = required(data, "env_shared_path")
       @pguser = data.fetch("pguser", "achan")
       @processes = data.fetch("processes", {})
+      @runtime_specs = Array(data.fetch("runtime_specs", []))
+      @setup_commands = Array(data.fetch("setup_commands", []))
+      @env_overrides = data.fetch("env_overrides", {})
+      @url_template = data.fetch("url_template", "https://app.{domain}:{port}")
+      @dns_zone = data.fetch("dns_zone", domain.split(".").last(2).join("."))
+      @dns_records = Array(data.fetch("dns_records", ["{domain}", "*.{domain}"]))
+    end
+
+    def database_enabled?
+      @database_enabled
+    end
+
+    def dns_records
+      @dns_records.map { |record| record.gsub("{domain}", domain) }
     end
 
     def cert_path(host)
@@ -149,7 +165,7 @@ module Tesseract
     end
 
     def worker_command
-      required_process("worker")
+      @processes.fetch("worker", "").to_s
     end
 
     def asset_command

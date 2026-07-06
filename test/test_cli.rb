@@ -49,6 +49,34 @@ class CLITest < Minitest::Test
     assert_empty stderr
   end
 
+  def test_live_prints_running_worktree_urls
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "live"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "APP"
+    assert_includes script, "WORKTREE"
+    assert_includes script, "URL"
+    assert_includes script, "/home/bot/repos/sprung-app"
+    assert_includes script, "/home/bot/repos/flexday"
+    assert_includes script, "git -C \"$main_path\" worktree list --porcelain"
+    assert_includes script, "\"$main_path/bin/tesseract\" worktree status \"$slug\""
+    assert_includes script, "running="
+    assert_includes script, "url="
+    assert_empty stderr.string
+  end
+
   def test_global_host_can_follow_command
     status, stdout, stderr = run_cli("app", "list", "--host", "local")
 

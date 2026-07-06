@@ -24,6 +24,8 @@ module Tesseract
       case command
       when "doctor"
         doctor
+      when "live"
+        live
       when "bootstrap"
         bootstrap
       when "services"
@@ -134,6 +136,48 @@ module Tesseract
         echo "service_ssh_target=#{host.service_ssh_target}"
         command -v docker >/dev/null 2>&1 && echo "service_docker_installed=yes" || echo "service_docker_installed=no"
         docker ps >/dev/null 2>&1 && echo "service_docker_access=yes" || echo "service_docker_access=no"
+      SH
+    end
+
+    def live
+      apps = @config.apps.map { |profile| "#{profile.id}\t#{profile.main_path}" }
+
+      runner.run(<<~SH)
+        set -u
+        found_file=$(mktemp)
+        rm -f "$found_file"
+        cleanup_live() {
+          rm -f "$found_file"
+        }
+        trap cleanup_live EXIT
+        printf "%-10s %-22s %s\\n" "APP" "WORKTREE" "URL"
+        while IFS="$(printf '\\t')" read -r app main_path; do
+          [ -n "$app" ] || continue
+          [ -d "$main_path" ] || continue
+          [ -x "$main_path/bin/tesseract" ] || continue
+
+          git -C "$main_path" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
+            case "$line" in
+              "worktree "*)
+                path=${line#worktree }
+                [ "$path" != "$main_path" ] || continue
+                slug=$(basename "$path")
+                status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
+                url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
+                if [ "$running" = "yes" ] && [ -n "$url" ]; then
+                  printf "%-10s %-22s %s\\n" "$app" "$slug" "$url"
+                  touch "$found_file"
+                fi
+                ;;
+            esac
+          done
+        done <<'EOF'
+#{apps.join("\n")}
+EOF
+        if [ ! -f "$found_file" ]; then
+          echo "none"
+        fi
       SH
     end
 
@@ -667,6 +711,7 @@ EOF
       <<~HELP
         Usage:
           tesseract [--host HOST] doctor
+          tesseract [--host HOST] live
           tesseract [--host HOST] bootstrap
           tesseract [--host HOST] services up|down|logs
           tesseract [--host HOST] app list

@@ -216,12 +216,10 @@ module Tesseract
         echo "app=#{profile.id}"
         echo "repo=#{profile.repo}"
         echo "main_path=#{profile.main_path}"
-        echo "worktree_root=#{profile.worktree_root}"
         echo "domain=#{profile.domain}"
-        echo "base_port=#{profile.base_port}"
         [ -d #{Shell.escape(profile.main_path)} ] && echo "main_clone=ok" || echo "main_clone=missing"
-        [ -d #{Shell.escape(profile.worktree_root)} ] && echo "worktree_root=ok" || echo "worktree_root=missing"
         [ -f #{Shell.escape(profile.env_shared_path)} ] && echo "shared_env=ok" || echo "shared_env=missing"
+        [ -x #{Shell.escape(File.join(profile.main_path, "bin", "tesseract"))} ] && echo "repo_tesseract=ok" || echo "repo_tesseract=missing"
         for cmd in git tmux mise; do
           if command -v "$cmd" >/dev/null 2>&1; then
             echo "$cmd=ok"
@@ -279,7 +277,7 @@ module Tesseract
             rm -f "$env_backup"
           fi
         fi
-        mkdir -p #{Shell.escape(profile.worktree_root)}
+        #{profile.worktree_root ? "mkdir -p #{Shell.escape(profile.worktree_root)}" : ":"}
       SH
     end
 
@@ -323,267 +321,27 @@ module Tesseract
 
       profile = app_profile(require_arg("app id"))
       slug = require_arg("worktree slug")
-      branch = @argv.shift
+      extra_args = @argv
 
       case action
-      when "create"
-        worktree_create(profile, slug, branch)
-      when "start"
-        worktree_start(profile, slug)
-      when "stop"
-        worktree_stop(profile, slug)
-      when "status"
-        worktree_status(profile, slug)
-      when "remove"
-        worktree_remove(profile, slug)
+      when "create", "start", "stop", "status", "remove"
+        worktree_dispatch(profile, action, slug, extra_args)
       else
         usage("unknown worktree action: #{action}")
       end
     end
 
-    def worktree_create(profile, slug, branch)
-      profile_exports = shell_profile_exports(profile, slug)
-      branch_name = branch || "feature/#{slug}"
-
+    def worktree_dispatch(profile, action, slug, extra_args)
+      args = ["worktree", action, slug, *extra_args].map { |arg| Shell.escape(arg) }.join(" ")
       runner.run(<<~SH)
         set -eu
-        #{profile_exports}
-        export BRANCH=#{Shell.single_quoted(branch_name)}
-        mkdir -p "$WORKTREE_ROOT" "$(dirname "$REGISTRY")"
-        touch "$REGISTRY"
-        if awk -F '\\t' -v slug="$SLUG" '$1 == slug { found=1 } END { exit found ? 0 : 1 }' "$REGISTRY"; then
-          echo "worktree already registered: $SLUG"
-          exit 0
-        fi
-
-        PORT=""
-        i=1
-        while [ "$i" -le "$PORT_COUNT" ]; do
-          candidate=$((BASE_PORT + i))
-          if ! awk -F '\\t' -v port="$candidate" '$2 == port { found=1 } END { exit found ? 0 : 1 }' "$REGISTRY" &&
-             ! lsof -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
-            PORT="$candidate"
-            break
-          fi
-          i=$((i + 1))
-        done
-
-        if [ -z "$PORT" ]; then
-          echo "no available port in ${BASE_PORT}+1..$((BASE_PORT + PORT_COUNT))" >&2
+        cd #{Shell.escape(profile.main_path)}
+        if [ ! -x ./bin/tesseract ]; then
+          echo "missing repo-local ./bin/tesseract in #{profile.main_path}" >&2
           exit 1
         fi
-
-        REDIS_DB=$((PORT - BASE_PORT))
-        DB_NAME="-"
-        if [ "$DATABASE_ENABLED" = "true" ]; then
-          DB_NAME="${DB_PREFIX}_${SANITIZED}"
-        fi
-        WORKTREE_PATH="${WORKTREE_ROOT}/${SLUG}"
-        SESSION="${APP_ID}_${SANITIZED}"
-
-        cd "$MAIN_PATH"
-        if [ -d "$WORKTREE_PATH" ]; then
-          echo "worktree directory exists: $WORKTREE_PATH"
-        elif git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-          git worktree add "$WORKTREE_PATH" "$BRANCH"
-        else
-          git worktree add -b "$BRANCH" "$WORKTREE_PATH" HEAD
-        fi
-
-        cd "$WORKTREE_PATH"
-        if [ -f "$ENV_SHARED_PATH" ] && [ ! -e .env.local ]; then
-          ln -s "$ENV_SHARED_PATH" .env.local
-        fi
-        if [ -f "$CERT_PATH" ] && [ ! -e app.crt ]; then
-          ln -s "$CERT_PATH" app.crt
-        fi
-        if [ -f "$KEY_PATH" ] && [ ! -e app.key ]; then
-          ln -s "$KEY_PATH" app.key
-        fi
-
-        if [ "$DATABASE_ENABLED" = "true" ]; then
-          cat > .env.development.local <<EOF
-APP_DOMAIN=${DOMAIN}
-DASHBOARD_DOMAIN=app.${DOMAIN}
-APP_PORT=:${PORT}
-PORT=${PORT}
-DATABASE_NAME=${DB_NAME}
-PGHOST=127.0.0.1
-PGUSER=${PGUSER_VALUE}
-PGPASSWORD=#{Shell.single_quoted(host.postgres_password)}
-SPRUNG_DATABASE_PASSWORD=#{Shell.single_quoted(host.postgres_password)}
-REDIS_URL=redis://127.0.0.1:6379/${REDIS_DB}
-WEBSITE_URL=https://app.${DOMAIN}:${PORT}
-API_URL=https://api.${DOMAIN}:${PORT}
-EOF
-        else
-          cat > .env.development.local <<EOF
-#{env_overrides_content(profile)}
-EOF
-        fi
-
-        if [ "$DATABASE_ENABLED" = "true" ] && command -v createdb >/dev/null 2>&1; then
-          createdb "$DB_NAME" 2>/dev/null || true
-        fi
-        #{worktree_setup_commands_script(profile)}
-        printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$SLUG" "$PORT" "$REDIS_DB" "$DB_NAME" "$WORKTREE_PATH" "$SESSION" >> "$REGISTRY"
-        if [ "$DATABASE_ENABLED" = "true" ]; then
-          echo "created $APP_ID/$SLUG port=$PORT db=$DB_NAME redis_db=$REDIS_DB path=$WORKTREE_PATH"
-        else
-          echo "created $APP_ID/$SLUG port=$PORT path=$WORKTREE_PATH"
-        fi
+        exec ./bin/tesseract #{args}
       SH
-
-      return create_database(profile, slug) if profile.database_enabled?
-
-      0
-    end
-
-    def worktree_start(profile, slug)
-      runner.run(<<~SH)
-        set -eu
-        #{shell_profile_exports(profile, slug)}
-        row=$(awk -F '\\t' -v slug="$SLUG" '$1 == slug { print; exit }' "$REGISTRY")
-        if [ -z "$row" ]; then
-          echo "worktree is not registered: $SLUG" >&2
-          exit 1
-        fi
-        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
-        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
-        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
-        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
-        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
-        cd "$WORKTREE_PATH"
-        AGENT_COMMAND=#{Shell.single_quoted(profile.agent_command)}
-        WEB_COMMAND=#{Shell.single_quoted(profile.web_command)}
-        WORKER_COMMAND=#{Shell.single_quoted(profile.worker_command)}
-        ASSET_COMMAND_TEMPLATE=#{Shell.single_quoted(profile.asset_command)}
-        URL_TEMPLATE=#{Shell.single_quoted(profile.url_template)}
-        WEB_COMMAND="${WEB_COMMAND//\\{port\\}/$PORT}"
-        WEB_COMMAND="${WEB_COMMAND//\\{domain\\}/$DOMAIN}"
-        WORKER_COMMAND="${WORKER_COMMAND//\\{port\\}/$PORT}"
-        WORKER_COMMAND="${WORKER_COMMAND//\\{domain\\}/$DOMAIN}"
-        ASSET_COMMAND_RENDERED="${ASSET_COMMAND_TEMPLATE//\\{port\\}/$PORT}"
-        ASSET_COMMAND_RENDERED="${ASSET_COMMAND_RENDERED//\\{domain\\}/$DOMAIN}"
-        URL="${URL_TEMPLATE//\\{port\\}/$PORT}"
-        URL="${URL//\\{domain\\}/$DOMAIN}"
-        if command -v mise >/dev/null 2>&1; then
-          MISE_SPECS=#{Shell.single_quoted(profile.runtime_specs.join(" "))}
-          if [ -z "$MISE_SPECS" ]; then
-            [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
-            [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
-          fi
-          if [ -n "$MISE_SPECS" ]; then
-            WEB_COMMAND="mise exec $MISE_SPECS -- $WEB_COMMAND"
-            if [ -n "$WORKER_COMMAND" ]; then
-              WORKER_COMMAND="mise exec $MISE_SPECS -- $WORKER_COMMAND"
-            fi
-          fi
-          if [ -n "$ASSET_COMMAND_RENDERED" ]; then
-            ASSET_COMMAND_RENDERED="mise exec $MISE_SPECS -- $ASSET_COMMAND_RENDERED"
-          fi
-        fi
-        if tmux has-session -t "$SESSION" 2>/dev/null; then
-          echo "session already running: $SESSION"
-          exit 0
-        fi
-        tmux new-session -d -s "$SESSION" -n main
-        tmux send-keys -t "$SESSION":main "pwd" C-m
-        tmux split-window -h -t "$SESSION":main
-        tmux send-keys -t "$SESSION":main.1 "$AGENT_COMMAND" C-m
-        tmux new-window -t "$SESSION" -n services
-        tmux send-keys -t "$SESSION":services "$WEB_COMMAND" C-m
-        if [ -n "$WORKER_COMMAND" ]; then
-          tmux split-window -v -t "$SESSION":services
-          tmux send-keys -t "$SESSION":services.1 "$WORKER_COMMAND" C-m
-        fi
-        if [ -n "$ASSET_COMMAND_RENDERED" ]; then
-          tmux split-window -v -t "$SESSION":services
-          tmux send-keys -t "$SESSION":services.2 "$ASSET_COMMAND_RENDERED" C-m
-        fi
-        echo "started $SESSION"
-        echo "url=$URL"
-      SH
-    end
-
-    def worktree_stop(profile, slug)
-      runner.run(<<~SH)
-        set -eu
-        #{shell_profile_exports(profile, slug)}
-        SESSION=$(awk -F '\\t' -v slug="$SLUG" '$1 == slug { print $6; exit }' "$REGISTRY")
-        if [ -z "$SESSION" ]; then
-          echo "worktree is not registered: $SLUG" >&2
-          exit 1
-        fi
-        if tmux has-session -t "$SESSION" 2>/dev/null; then
-          tmux kill-session -t "$SESSION"
-          echo "stopped $SESSION"
-        else
-          echo "not running: $SESSION"
-        fi
-      SH
-    end
-
-    def worktree_status(profile, slug)
-      runner.run(<<~SH)
-        set -eu
-        #{shell_profile_exports(profile, slug)}
-        row=$(awk -F '\\t' -v slug="$SLUG" '$1 == slug { print; exit }' "$REGISTRY")
-        if [ -z "$row" ]; then
-          echo "registered=no"
-          exit 0
-        fi
-        SLUG_VALUE=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $1 }')
-        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
-        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
-        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
-        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
-        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
-        echo "registered=yes"
-        echo "app=$APP_ID"
-        echo "slug=$SLUG_VALUE"
-        echo "port=$PORT"
-        echo "redis_db=$REDIS_DB"
-        echo "database=$DB_NAME"
-        echo "path=$WORKTREE_PATH"
-        echo "session=$SESSION"
-        tmux has-session -t "$SESSION" 2>/dev/null && echo "running=yes" || echo "running=no"
-        URL_TEMPLATE=#{Shell.single_quoted(profile.url_template)}
-        URL="${URL_TEMPLATE//\\{port\\}/$PORT}"
-        URL="${URL//\\{domain\\}/$DOMAIN}"
-        echo "url=$URL"
-      SH
-    end
-
-    def worktree_remove(profile, slug)
-      runner.run(<<~SH)
-        set -eu
-        #{shell_profile_exports(profile, slug)}
-        row=$(awk -F '\\t' -v slug="$SLUG" '$1 == slug { print; exit }' "$REGISTRY")
-        if [ -z "$row" ]; then
-          echo "worktree is not registered: $SLUG"
-          exit 0
-        fi
-        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
-        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
-        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
-        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
-        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
-        tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION" || true
-        cd "$MAIN_PATH"
-        git worktree remove "$WORKTREE_PATH" || rm -rf "$WORKTREE_PATH"
-        if [ "$DATABASE_ENABLED" = "true" ] && command -v dropdb >/dev/null 2>&1; then
-          dropdb --if-exists "$DB_NAME" 2>/dev/null || true
-        fi
-        tmp="${REGISTRY}.tmp"
-        awk -F '\\t' -v slug="$SLUG" '$1 != slug { print }' "$REGISTRY" > "$tmp"
-        mv "$tmp" "$REGISTRY"
-        echo "removed $APP_ID/$SLUG"
-      SH
-
-      return drop_database(profile, slug) if profile.database_enabled?
-
-      0
     end
 
     def dns

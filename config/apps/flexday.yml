@@ -1,0 +1,24 @@
+id: flexday
+repo: git@github.com:FlexdayInc/flexday
+main_path: /home/bot/repos/flexday
+worktree_root: /home/bot/repos/flexday-worktrees
+domain: flexday.tars.achan.bot
+dns_records:
+  - "{domain}"
+base_port: 4000
+port_count: 99
+database: false
+env_shared_path: /home/bot/repos/flexday/.env.local
+runtime_specs:
+  - node@20.20.0
+setup_commands:
+  - corepack enable
+  - corepack prepare pnpm@9 --activate
+  - pnpm install --frozen-lockfile
+env_overrides:
+  PORT: "{port}"
+  NEXT_PUBLIC_SITE_URL: "http://{domain}:{port}"
+url_template: "http://{domain}:{port}"
+processes:
+  web: pnpm exec next dev -H 0.0.0.0 -p {port}
+  agent: claude

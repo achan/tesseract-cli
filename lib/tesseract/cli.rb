@@ -234,12 +234,17 @@ module Tesseract
           [ -f .ruby-version ] && echo "ruby_version_file=$(cat .ruby-version)" || echo "ruby_version_file=missing"
           [ -f .nvmrc ] && echo "node_version_file=$(cat .nvmrc)" || true
           if command -v mise >/dev/null 2>&1; then
-            MISE_SPECS=""
-            [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
-            [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
+            MISE_SPECS=#{Shell.single_quoted(profile.runtime_specs.join(" "))}
+            if [ -z "$MISE_SPECS" ]; then
+              [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
+              [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
+            fi
             echo "mise_specs=${MISE_SPECS# }"
-            ruby_output=$(mise exec $MISE_SPECS -- ruby -v 2>&1) && echo "ruby_runtime=$ruby_output" || echo "ruby_runtime_error=$ruby_output"
-            bundle_output=$(mise exec $MISE_SPECS -- bundle -v 2>&1) && echo "bundle=ok $bundle_output" || echo "bundle=missing $bundle_output"
+            if [ -n "$MISE_SPECS" ]; then
+              runtime_output=$(mise exec $MISE_SPECS -- sh -lc 'command -v ruby >/dev/null 2>&1 && ruby -v || node -v' 2>&1) && echo "runtime=$runtime_output" || echo "runtime_error=$runtime_output"
+            fi
+            bundle_output=$(mise exec $MISE_SPECS -- bundle -v 2>&1) && echo "bundle=ok $bundle_output" || true
+            pnpm_output=$(mise exec $MISE_SPECS -- pnpm -v 2>&1) && echo "pnpm=ok $pnpm_output" || true
           else
             command -v ruby >/dev/null 2>&1 && echo "ruby_runtime=$(ruby -v)" || echo "ruby_runtime=missing"
             command -v bundle >/dev/null 2>&1 && echo "bundle=ok $(bundle -v)" || echo "bundle=missing"
@@ -255,7 +260,24 @@ module Tesseract
         if [ -d #{Shell.escape(profile.main_path)}/.git ]; then
           echo "clone exists: #{profile.main_path}"
         else
+          env_backup=""
+          if [ -d #{Shell.escape(profile.main_path)} ] && [ ! -d #{Shell.escape(profile.main_path)}/.git ]; then
+            if [ -f #{Shell.escape(profile.env_shared_path)} ]; then
+              env_backup=$(mktemp)
+              cp #{Shell.escape(profile.env_shared_path)} "$env_backup"
+            fi
+            if find #{Shell.escape(profile.main_path)} -mindepth 1 ! -name .env.local | grep -q .; then
+              echo "refusing to clone into non-empty non-git directory: #{profile.main_path}" >&2
+              exit 1
+            fi
+            rm -rf #{Shell.escape(profile.main_path)}
+          fi
           git clone #{Shell.escape(profile.repo)} #{Shell.escape(profile.main_path)}
+          if [ -n "$env_backup" ]; then
+            cp "$env_backup" #{Shell.escape(profile.env_shared_path)}
+            chmod 0600 #{Shell.escape(profile.env_shared_path)}
+            rm -f "$env_backup"
+          fi
         fi
         mkdir -p #{Shell.escape(profile.worktree_root)}
       SH
@@ -265,24 +287,33 @@ module Tesseract
       runner.run(<<~SH)
         set -eu
         cd #{Shell.escape(profile.main_path)}
+        if [ ! -d .git ]; then
+          echo "main clone is missing at #{profile.main_path}; run: tesseract app clone #{profile.id} --host #{host.id}" >&2
+          exit 1
+        fi
         if ! command -v mise >/dev/null 2>&1; then
           echo "mise is required for app setup because repo runtime files are the source of truth" >&2
           exit 1
         fi
         MISE_SPECS=""
-        [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
-        [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
+        CONFIGURED_SPECS=#{Shell.single_quoted(profile.runtime_specs.join(" "))}
+        if [ -n "$CONFIGURED_SPECS" ]; then
+          MISE_SPECS="$CONFIGURED_SPECS"
+        else
+          [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
+          [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
+        fi
         if [ -z "$MISE_SPECS" ]; then
-          echo "no .ruby-version or .nvmrc found in #{profile.main_path}" >&2
+          echo "no runtime specs configured and no .ruby-version or .nvmrc found in #{profile.main_path}" >&2
           exit 1
         fi
         mise install --quiet $MISE_SPECS
-        if ! mise exec $MISE_SPECS -- bundle -v >/dev/null 2>&1; then
+        if #{profile.setup_commands.empty? ? "true" : "false"} && ! mise exec $MISE_SPECS -- bundle -v >/dev/null 2>&1; then
           mise exec $MISE_SPECS -- gem install bundler
         fi
         echo "using repo runtime files via mise exec; no global activation is required"
-        mise exec $MISE_SPECS -- ruby -v
-        mise exec $MISE_SPECS -- bundle -v
+        #{runtime_probe_commands(profile)}
+        #{setup_commands_script(profile)}
       SH
     end
 
@@ -343,7 +374,10 @@ module Tesseract
         fi
 
         REDIS_DB=$((PORT - BASE_PORT))
-        DB_NAME="${DB_PREFIX}_${SANITIZED}"
+        DB_NAME="-"
+        if [ "$DATABASE_ENABLED" = "true" ]; then
+          DB_NAME="${DB_PREFIX}_${SANITIZED}"
+        fi
         WORKTREE_PATH="${WORKTREE_ROOT}/${SLUG}"
         SESSION="${APP_ID}_${SANITIZED}"
 
@@ -367,7 +401,8 @@ module Tesseract
           ln -s "$KEY_PATH" app.key
         fi
 
-        cat > .env.development.local <<EOF
+        if [ "$DATABASE_ENABLED" = "true" ]; then
+          cat > .env.development.local <<EOF
 APP_DOMAIN=${DOMAIN}
 DASHBOARD_DOMAIN=app.${DOMAIN}
 APP_PORT=:${PORT}
@@ -381,15 +416,27 @@ REDIS_URL=redis://127.0.0.1:6379/${REDIS_DB}
 WEBSITE_URL=https://app.${DOMAIN}:${PORT}
 API_URL=https://api.${DOMAIN}:${PORT}
 EOF
+        else
+          cat > .env.development.local <<EOF
+#{env_overrides_content(profile)}
+EOF
+        fi
 
-        if command -v createdb >/dev/null 2>&1; then
+        if [ "$DATABASE_ENABLED" = "true" ] && command -v createdb >/dev/null 2>&1; then
           createdb "$DB_NAME" 2>/dev/null || true
         fi
+        #{worktree_setup_commands_script(profile)}
         printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$SLUG" "$PORT" "$REDIS_DB" "$DB_NAME" "$WORKTREE_PATH" "$SESSION" >> "$REGISTRY"
-        echo "created $APP_ID/$SLUG port=$PORT db=$DB_NAME redis_db=$REDIS_DB path=$WORKTREE_PATH"
+        if [ "$DATABASE_ENABLED" = "true" ]; then
+          echo "created $APP_ID/$SLUG port=$PORT db=$DB_NAME redis_db=$REDIS_DB path=$WORKTREE_PATH"
+        else
+          echo "created $APP_ID/$SLUG port=$PORT path=$WORKTREE_PATH"
+        fi
       SH
 
-      create_database(profile, slug)
+      return create_database(profile, slug) if profile.database_enabled?
+
+      0
     end
 
     def worktree_start(profile, slug)
@@ -401,26 +448,37 @@ EOF
           echo "worktree is not registered: $SLUG" >&2
           exit 1
         fi
-        IFS="$(printf '\\t')" read -r _ PORT REDIS_DB DB_NAME WORKTREE_PATH SESSION <<EOF
-$row
-EOF
+        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
+        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
+        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
+        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
+        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
         cd "$WORKTREE_PATH"
         AGENT_COMMAND=#{Shell.single_quoted(profile.agent_command)}
         WEB_COMMAND=#{Shell.single_quoted(profile.web_command)}
         WORKER_COMMAND=#{Shell.single_quoted(profile.worker_command)}
         ASSET_COMMAND_TEMPLATE=#{Shell.single_quoted(profile.asset_command)}
+        URL_TEMPLATE=#{Shell.single_quoted(profile.url_template)}
         WEB_COMMAND="${WEB_COMMAND//\\{port\\}/$PORT}"
         WEB_COMMAND="${WEB_COMMAND//\\{domain\\}/$DOMAIN}"
         WORKER_COMMAND="${WORKER_COMMAND//\\{port\\}/$PORT}"
         WORKER_COMMAND="${WORKER_COMMAND//\\{domain\\}/$DOMAIN}"
         ASSET_COMMAND_RENDERED="${ASSET_COMMAND_TEMPLATE//\\{port\\}/$PORT}"
         ASSET_COMMAND_RENDERED="${ASSET_COMMAND_RENDERED//\\{domain\\}/$DOMAIN}"
+        URL="${URL_TEMPLATE//\\{port\\}/$PORT}"
+        URL="${URL//\\{domain\\}/$DOMAIN}"
         if command -v mise >/dev/null 2>&1; then
-          MISE_SPECS=""
-          [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
-          [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
-          WEB_COMMAND="mise exec $MISE_SPECS -- $WEB_COMMAND"
-          WORKER_COMMAND="mise exec $MISE_SPECS -- $WORKER_COMMAND"
+          MISE_SPECS=#{Shell.single_quoted(profile.runtime_specs.join(" "))}
+          if [ -z "$MISE_SPECS" ]; then
+            [ -f .ruby-version ] && MISE_SPECS="$MISE_SPECS ruby@$(cat .ruby-version)"
+            [ -f .nvmrc ] && MISE_SPECS="$MISE_SPECS node@$(cat .nvmrc)"
+          fi
+          if [ -n "$MISE_SPECS" ]; then
+            WEB_COMMAND="mise exec $MISE_SPECS -- $WEB_COMMAND"
+            if [ -n "$WORKER_COMMAND" ]; then
+              WORKER_COMMAND="mise exec $MISE_SPECS -- $WORKER_COMMAND"
+            fi
+          fi
           if [ -n "$ASSET_COMMAND_RENDERED" ]; then
             ASSET_COMMAND_RENDERED="mise exec $MISE_SPECS -- $ASSET_COMMAND_RENDERED"
           fi
@@ -435,14 +493,16 @@ EOF
         tmux send-keys -t "$SESSION":main.1 "$AGENT_COMMAND" C-m
         tmux new-window -t "$SESSION" -n services
         tmux send-keys -t "$SESSION":services "$WEB_COMMAND" C-m
-        tmux split-window -v -t "$SESSION":services
-        tmux send-keys -t "$SESSION":services.1 "$WORKER_COMMAND" C-m
+        if [ -n "$WORKER_COMMAND" ]; then
+          tmux split-window -v -t "$SESSION":services
+          tmux send-keys -t "$SESSION":services.1 "$WORKER_COMMAND" C-m
+        fi
         if [ -n "$ASSET_COMMAND_RENDERED" ]; then
           tmux split-window -v -t "$SESSION":services
           tmux send-keys -t "$SESSION":services.2 "$ASSET_COMMAND_RENDERED" C-m
         fi
         echo "started $SESSION"
-        echo "url=https://app.${DOMAIN}:${PORT}"
+        echo "url=$URL"
       SH
     end
 
@@ -473,9 +533,12 @@ EOF
           echo "registered=no"
           exit 0
         fi
-        IFS="$(printf '\\t')" read -r SLUG_VALUE PORT REDIS_DB DB_NAME WORKTREE_PATH SESSION <<EOF
-$row
-EOF
+        SLUG_VALUE=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $1 }')
+        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
+        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
+        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
+        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
+        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
         echo "registered=yes"
         echo "app=$APP_ID"
         echo "slug=$SLUG_VALUE"
@@ -485,7 +548,10 @@ EOF
         echo "path=$WORKTREE_PATH"
         echo "session=$SESSION"
         tmux has-session -t "$SESSION" 2>/dev/null && echo "running=yes" || echo "running=no"
-        echo "url=https://app.${DOMAIN}:${PORT}"
+        URL_TEMPLATE=#{Shell.single_quoted(profile.url_template)}
+        URL="${URL_TEMPLATE//\\{port\\}/$PORT}"
+        URL="${URL//\\{domain\\}/$DOMAIN}"
+        echo "url=$URL"
       SH
     end
 
@@ -498,13 +564,15 @@ EOF
           echo "worktree is not registered: $SLUG"
           exit 0
         fi
-        IFS="$(printf '\\t')" read -r _ PORT REDIS_DB DB_NAME WORKTREE_PATH SESSION <<EOF
-$row
-EOF
+        PORT=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $2 }')
+        REDIS_DB=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $3 }')
+        DB_NAME=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $4 }')
+        WORKTREE_PATH=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $5 }')
+        SESSION=$(printf "%s\\n" "$row" | awk -F '\\t' '{ print $6 }')
         tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION" || true
         cd "$MAIN_PATH"
         git worktree remove "$WORKTREE_PATH" || rm -rf "$WORKTREE_PATH"
-        if command -v dropdb >/dev/null 2>&1; then
+        if [ "$DATABASE_ENABLED" = "true" ] && command -v dropdb >/dev/null 2>&1; then
           dropdb --if-exists "$DB_NAME" 2>/dev/null || true
         fi
         tmp="${REGISTRY}.tmp"
@@ -513,7 +581,9 @@ EOF
         echo "removed $APP_ID/$SLUG"
       SH
 
-      drop_database(profile, slug)
+      return drop_database(profile, slug) if profile.database_enabled?
+
+      0
     end
 
     def dns
@@ -529,12 +599,16 @@ EOF
           echo "expected_host=#{host.id}"
           printf "host_tailscale_ip="
           tailscale ip -4 2>/dev/null | head -n1 || true
-          echo "domain_a=$(dig +short #{Shell.escape(profile.domain)} A 2>/dev/null | tr '\\n' ' ')"
-          echo "wildcard_a=$(dig +short app.#{Shell.escape(profile.domain)} A 2>/dev/null | tr '\\n' ' ')"
+          while IFS= read -r record; do
+            [ -n "$record" ] || continue
+            value=$(dig +short "$record" A 2>/dev/null | tr '\\n' ' ')
+            echo "record_a[$record]=$value"
+          done <<'EOF'
+#{profile.dns_records.join("\n")}
+EOF
         SH
       when "sync"
-        @stderr.puts("error: dns sync is not implemented yet; configure #{profile.domain} and *.#{profile.domain} to point at #{host.id}'s Tailscale IP")
-        1
+        dns_sync(profile)
       else
         usage("unknown dns action: #{action}")
       end
@@ -599,6 +673,8 @@ EOF
         "BASE_PORT" => profile.base_port.to_s,
         "PORT_COUNT" => profile.port_count.to_s,
         "DB_PREFIX" => profile.database_prefix,
+        "DATABASE_ENABLED" => profile.database_enabled?.to_s,
+        "MISE_SPECS" => profile.runtime_specs.join(" "),
         "REGISTRY" => registry,
         "ENV_SHARED_PATH" => profile.env_shared_path,
         "CERT_PATH" => profile.cert_path(host),
@@ -635,6 +711,106 @@ EOF
           echo "tesseract-postgres is not running; start services before creating databases" >&2
           exit 1
         fi
+      SH
+    end
+
+    def runtime_probe_commands(profile)
+      if profile.setup_commands.empty?
+        <<~SH.chomp
+          mise exec $MISE_SPECS -- ruby -v
+          mise exec $MISE_SPECS -- bundle -v
+        SH
+      else
+        <<~SH.chomp
+          mise exec $MISE_SPECS -- node -v
+          mise exec $MISE_SPECS -- corepack --version
+        SH
+      end
+    end
+
+    def setup_commands_script(profile)
+      profile.setup_commands.map do |command|
+        "mise exec $MISE_SPECS -- #{command}"
+      end.join("\n")
+    end
+
+    def worktree_setup_commands_script(profile)
+      setup_commands_script(profile)
+    end
+
+    def env_overrides_content(profile)
+      profile.env_overrides.map do |key, value|
+        rendered = value.to_s.gsub("{port}", "${PORT}").gsub("{domain}", "${DOMAIN}")
+        "#{key}=#{rendered}"
+      end.join("\n")
+    end
+
+    def dns_sync(profile)
+      token = ENV["CLOUDFLARE_API_TOKEN"]
+      raise Config::Error, "CLOUDFLARE_API_TOKEN is required for dns sync" if token.to_s.empty?
+
+      records = profile.dns_records.join("\n")
+
+      runner.run(<<~SH)
+        set -eu
+        for cmd in curl ruby tailscale; do
+          if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo "$cmd is required for dns sync" >&2
+            exit 1
+          fi
+        done
+
+        CF_TOKEN=#{Shell.single_quoted(token)}
+        ZONE_NAME=#{Shell.single_quoted(profile.dns_zone)}
+        HOST_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+        if [ -z "$HOST_IP" ]; then
+          echo "could not determine #{host.id} Tailscale IPv4 address" >&2
+          exit 1
+        fi
+
+        api_get() {
+          curl -fsS \\
+            -H "Authorization: Bearer $CF_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            "$1"
+        }
+
+        api_write() {
+          method="$1"
+          url="$2"
+          data="$3"
+          curl -fsS \\
+            -X "$method" \\
+            -H "Authorization: Bearer $CF_TOKEN" \\
+            -H "Content-Type: application/json" \\
+            --data "$data" \\
+            "$url" >/dev/null
+        }
+
+        zone_response=$(api_get "https://api.cloudflare.com/client/v4/zones?name=$ZONE_NAME")
+        ZONE_ID=$(printf "%s" "$zone_response" | ruby -rjson -e 'data = JSON.parse(STDIN.read); zone = data.fetch("result").first; abort("zone not found") unless zone; print zone.fetch("id")')
+
+        while IFS= read -r record_name; do
+          [ -n "$record_name" ] || continue
+          escaped_record=$(ruby -rjson -e 'print JSON.generate(ARGV.fetch(0))' "$record_name")
+          escaped_ip=$(ruby -rjson -e 'print JSON.generate(ARGV.fetch(0))' "$HOST_IP")
+          payload=$(printf '{"type":"A","name":%s,"content":%s,"ttl":1,"proxied":false}' "$escaped_record" "$escaped_ip")
+          query_name=$(ruby -ruri -e 'print URI.encode_www_form_component(ARGV.fetch(0))' "$record_name")
+          record_response=$(api_get "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=$query_name")
+          RECORD_ID=$(printf "%s" "$record_response" | ruby -rjson -e 'data = JSON.parse(STDIN.read); record = data.fetch("result").first; print(record ? record.fetch("id") : "")')
+
+          if [ -n "$RECORD_ID" ]; then
+            api_write PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" "$payload"
+            echo "updated_dns=$record_name A $HOST_IP"
+          else
+            api_write POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" "$payload"
+            echo "created_dns=$record_name A $HOST_IP"
+          fi
+        done <<'EOF'
+#{records}
+EOF
+
+        unset CF_TOKEN
       SH
     end
 

@@ -1,238 +1,284 @@
 # tesseract-cli
 
-Personal development control plane for running Docovia Rails worktrees and
+Personal development control plane for running app worktrees, dev servers, and
 coding agents on remote hosts.
 
 The default host is `tars`. Runtime work runs as `bot`; Docker-backed shared
 services run as `achan` through the host profile's `service_user`.
 
+## Mental Model
+
+`bin/tesseract` is run from this repo on the control machine, usually the
+MacBook. It reads local YAML profiles, connects to the selected host over SSH,
+and runs the requested operation there.
+
+There are three layers:
+
+- Host profiles in `config/hosts/*.yml` describe machines such as `tars` and
+  `local`.
+- App profiles in `config/apps/*.yml` describe app clones such as `docovia` and
+  `flexday`.
+- Repo-local app adapters, usually `<app main path>/bin/tesseract`, own
+  app-specific worktree behavior.
+
+The top-level CLI handles host/app discovery, SSH, shared services, DNS, certs,
+and dispatch. Worktree commands intentionally delegate into the app repository
+so each app can decide how to create databases, env files, tmux sessions,
+servers, workers, and asset processes.
+
+## Command Shape
+
+All commands accept `--host`. If omitted, `--host tars` is used.
+
+```bash
+bin/tesseract doctor
+bin/tesseract live
+bin/tesseract bootstrap
+bin/tesseract services up|down|logs
+bin/tesseract app list
+bin/tesseract app doctor|clone|setup APP
+bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
+bin/tesseract dns doctor|sync APP
+bin/tesseract cert doctor|issue|renew APP
+```
+
+Examples:
+
+```bash
+bin/tesseract app list
+bin/tesseract live
+bin/tesseract worktree status docovia patientnow-integration
+bin/tesseract worktree start flexday calendar-refresh --host tars
+```
+
 ## Prerequisites
 
-- SSH access to `bot@tars` and `achan@tars`.
-- Tailscale on the machine used to open the app.
-- A Cloudflare API token with `Zone:Read` and `DNS:Edit` for `achan.bot`.
-  `bin/tesseract dns sync` and `bin/tesseract cert issue` read it from
-  `CLOUDFLARE_API_TOKEN`.
+- SSH access to the runtime user, for example `bot@tars`.
+- SSH access to the service user, for example `achan@tars`.
+- Tailscale on the machine used to open remote apps in a browser.
+- Docker access for the service user, not the runtime user.
+- `mise`, `git`, `tmux`, `ruby`, and app-specific runtimes on the execution
+  host.
+- A Cloudflare API token with `Zone:Read` and `DNS:Edit` for `achan.bot` when
+  running DNS or certificate commands.
 
-If the token is assigned in `~/.zshrc` without `export`, run DNS and cert commands
-through zsh:
+`bin/tesseract dns sync` and `bin/tesseract cert issue|renew` read
+`CLOUDFLARE_API_TOKEN` from the local environment and pass only the needed value
+to the remote command.
+
+If the token is assigned in `~/.zshrc` without `export`, run DNS and cert
+commands through zsh:
 
 ```bash
 zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync docovia --host tars'
-zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync flexday --host tars'
 zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract cert issue docovia --host tars'
 ```
 
-## Bootstrap
+## Host Bootstrap
 
-Create host directories, write the shared services compose file, and start
-Postgres/Redis:
+Bootstrap creates runtime directories for the selected host and writes the
+shared Docker Compose file for PostgreSQL and Redis.
 
 ```bash
+bin/tesseract doctor --host tars
 bin/tesseract bootstrap --host tars
 bin/tesseract services up --host tars
+bin/tesseract services logs --host tars
+```
+
+On `tars`, the shared services are defined at:
+
+```text
+/home/achan/.config/tesseract/services/compose.yml
+```
+
+The runtime registry and cert directories are:
+
+```text
+/home/bot/.local/share/tesseract/registry
+/home/bot/.local/share/tesseract/certs
+```
+
+## App Setup
+
+List configured apps:
+
+```bash
+bin/tesseract app list
+```
+
+Clone and prepare an app on the selected host:
+
+```bash
+bin/tesseract app clone docovia --host tars
+bin/tesseract app setup docovia --host tars
+
+bin/tesseract app clone flexday --host tars
+bin/tesseract app setup flexday --host tars
+```
+
+`app setup` uses the app repository runtime files through `mise`; no global
+runtime activation is required.
+
+Check an app profile and remote clone:
+
+```bash
+bin/tesseract app doctor docovia --host tars
+```
+
+## Shared App Environment
+
+Each app profile points at a shared env file on the host:
+
+```text
+docovia: /home/bot/repos/sprung-app/.env.local
+flexday: /home/bot/repos/flexday/.env.local
+```
+
+Worktree creation links or copies from the app's shared env according to the
+repo-local adapter. Keep real env files out of git and set permissions to
+`0600`.
+
+## DNS and Certificates
+
+Sync app DNS records to the host's Tailscale IP:
+
+```bash
 bin/tesseract dns sync docovia --host tars
-bin/tesseract dns sync flexday --host tars
 bin/tesseract dns doctor docovia --host tars
+
+bin/tesseract dns sync flexday --host tars
 bin/tesseract dns doctor flexday --host tars
 ```
 
-`dns doctor` should show `host_tailscale_ip=100.101.231.49`. Some resolvers on
-`tars` may still show empty `domain_a` values even when Cloudflare is already
-authoritative.
-
-## Certificates
-
-Issue a Let's Encrypt certificate with ACME DNS-01 through Cloudflare:
+Issue or inspect app certificates:
 
 ```bash
-zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract cert issue docovia --host tars'
+bin/tesseract cert issue docovia --host tars
 bin/tesseract cert doctor docovia --host tars
+bin/tesseract cert renew docovia --host tars
 ```
 
-The installed certificate files are:
+Certificates are installed under the host cert directory. For Docovia on `tars`:
 
 ```text
 /home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.crt
 /home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.key
 ```
 
-The certificate covers:
+## Worktree Lifecycle
 
-```text
-docovia.tars.achan.bot
-*.docovia.tars.achan.bot
-```
-
-## Clone Docovia
-
-```bash
-bin/tesseract app clone docovia --host tars
-bin/tesseract app setup docovia --host tars
-```
-
-## Clone Flexday
-
-Flexday is also managed as an offloaded project on `tars`.
-
-```bash
-bin/tesseract app clone flexday --host tars
-```
-
-Seed the shared Flexday env file once from the existing `subot` checkout. This
-is an operator step, not part of the tesseract scripts:
-
-```bash
-scp /Users/achan-bot/repos/flexday/.env.local bot@tars:/home/bot/repos/flexday/.env.local
-ssh bot@tars 'chmod 0600 /home/bot/repos/flexday/.env.local'
-```
-
-Then install the configured Node/pnpm runtime and dependencies:
-
-```bash
-bin/tesseract app setup flexday --host tars
-```
-
-## Shared App Environment
-
-Docovia expects a shared app env file at:
-
-```text
-/home/bot/repos/sprung-app/.env.local
-```
-
-`worktree create` links that file into each worktree when it already exists.
-A full real env is preferred. For a minimal bootable development env:
-
-```bash
-ssh bot@tars 'cat > /home/bot/repos/sprung-app/.env.local <<EOF
-APP_NAME=Docovia
-VARIABLE_NAME=docovia
-APP_DOMAIN=docovia.tars.achan.bot
-DASHBOARD_DOMAIN=app.docovia.tars.achan.bot
-APP_SUBDOMAIN=app
-API_SUBDOMAIN=api
-APP_PORT=:3101
-PORT=3101
-WEBSITE_URL=https://app.docovia.tars.achan.bot:3101
-API_URL=https://api.docovia.tars.achan.bot:3101
-WEBSITE_ROOT=app.docovia.tars.achan.bot:3101
-CLIENT_URL=http://localhost:3050
-PLATFORM_URL=https://www.docovia.com
-EMAIL_DOMAIN=docovia.com
-INTERNAL_ACCOUNT_ARRAY=[1]
-INTERNAL_EMAILS=["@sprung.io", "@docovia.com"]
-PARTNER_DOMAINS=[]
-SALES_TEAM=["Amos"]
-SMILEBRANDS_ACCOUNT_ID=0
-UPLOAD_REFACTORED_ID=1
-FACEBOOK_APP_ID=REPLACEME
-APPLE_ITUNES_APP_ID=REPLACEME
-GOOGLE_API_KEY_MAPS=REPLACEME
-GOOGLE_API_KEY_GEOCODER=REPLACEME
-TIMEZONE_API_KEY=REPLACEME
-S3_BUCKET_NAME=docovia-development
-S3_BUCKET_NAME_PUBLIC=docovia-development
-SLACK_WEBHOOK=REPLACEME
-SLACK_USER_WEBHOOK=REPLACEME
-DATADOG_RUM_ENABLED=false
-DATADOG_APPLICATION_ID=REPLACEME
-DATADOG_CLIENT_TOKEN=REPLACEME
-OPERATOR_NETWORK_DAYS_OFF=
-EOF
-chmod 0600 /home/bot/repos/sprung-app/.env.local'
-```
-
-## Worktrees
-
-Create Docovia and Flexday worktrees with the same command shape:
+Create a worktree from the app repository default branch:
 
 ```bash
 bin/tesseract worktree create docovia smoke-test --host tars
-bin/tesseract worktree create flexday smoke-test --host tars
 ```
 
-Prepare the app dependencies and database:
+Create a worktree from a specific branch:
 
 ```bash
-ssh bot@tars 'set -eu
-cd /home/bot/repos/sprung-worktrees/smoke-test
-MISE="mise exec ruby@$(cat .ruby-version) node@$(cat .nvmrc) --"
-$MISE bundle install
-$MISE npm install -g yarn@1.22.22
-$MISE yarn install --frozen-lockfile
-perl -0pi -e "s/host: <%= ENV\\[\\\"DASHBOARD_DOMAIN\\\"\\] %>/host: 0.0.0.0/; s/public: <%= ENV\\[\\\"DASHBOARD_DOMAIN\\\"\\] %>:3035/public: app.docovia.tars.achan.bot:3035/" config/webpacker.yml
-$MISE bundle exec rails db:migrate'
+bin/tesseract worktree create docovia patientnow-integration origin/feature/patientnow-integration --host tars
 ```
 
-The Webpacker patch is currently required because this app's
-`config/webpacker.yml` treats the ERB host value literally in this runtime.
-
-Start the worktree:
+Start, inspect, stop, and remove the worktree:
 
 ```bash
 bin/tesseract worktree start docovia smoke-test --host tars
 bin/tesseract worktree status docovia smoke-test --host tars
-
-bin/tesseract worktree start flexday smoke-test --host tars
-bin/tesseract worktree status flexday smoke-test --host tars
+bin/tesseract worktree stop docovia smoke-test --host tars
+bin/tesseract worktree remove docovia smoke-test --host tars
 ```
 
-Expected service panes:
+`stop` kills the app's tmux session and processes but leaves the worktree,
+database, env files, and registry entry in place. `remove` is destructive: it
+stops the session, removes the git worktree, prunes registry metadata, and lets
+the repo-local adapter clean up app-specific state.
 
-```text
-docovia_smoke_test:services.0 cmd=puma
-docovia_smoke_test:services.1 cmd=ruby
-docovia_smoke_test:services.2 cmd=node
-```
-
-Check panes with:
+Worktree commands run this shape on the selected host:
 
 ```bash
-ssh bot@tars 'tmux list-panes -a -F "#{session_name}:#{window_name}.#{pane_index} cmd=#{pane_current_command}"'
+cd <app main path>
+exec ./bin/tesseract worktree <action> <slug> [branch]
 ```
 
-## Access
+That app-local handoff is why Docovia and Flexday can share the top-level
+control plane while keeping different runtime details.
 
-Open:
+## Live Worktrees
+
+Show currently running app worktrees and their URLs:
+
+```bash
+bin/tesseract live --host tars
+```
+
+Example output:
+
+```text
+APP        WORKTREE               URL
+docovia    patientnow-integration https://app.docovia.tars.achan.bot:3102
+docovia    text-expander          https://app.docovia.tars.achan.bot:3103
+```
+
+`live` scans each configured app's main clone, asks the repo-local adapter for
+each worktree status, and prints worktrees with `running=yes` and a URL.
+
+## Browser Access
+
+Open the URL reported by `worktree status` or `live`.
+
+Docovia URLs usually look like:
 
 ```text
 https://app.docovia.tars.achan.bot:3101
+https://api.docovia.tars.achan.bot:3101
+```
+
+Flexday URLs usually look like:
+
+```text
 http://flexday.tars.achan.bot:4001
 ```
 
-Verify from the control machine:
+If the browser reports `ERR_NAME_NOT_RESOLVED`, verify DNS first:
 
 ```bash
-curl -I --resolve app.docovia.tars.achan.bot:3101:100.101.231.49 \
-  https://app.docovia.tars.achan.bot:3101
+bin/tesseract dns doctor docovia --host tars
 ```
 
-Expected response:
+Some local resolvers cache earlier NXDOMAIN responses. Use a resolver such as
+`1.1.1.1`, wait for cache expiry, or temporarily add host entries for the
+Tailscale IP.
 
-```text
-HTTP/1.1 301 Moved Permanently
-location: https://app.docovia.tars.achan.bot:3101/providers/login
+## Adding an App
+
+Add a YAML file under `config/apps/` with at least:
+
+```yaml
+id: example
+repo: git@github.com:owner/repo
+main_path: /home/bot/repos/example
+domain: example.tars.achan.bot
+env_shared_path: /home/bot/repos/example/.env.local
 ```
 
-If the browser reports `ERR_NAME_NOT_RESOLVED`, the local resolver may have
-cached an earlier NXDOMAIN. Use a resolver such as `1.1.1.1`, wait for the cache
-to expire, or add a temporary `/etc/hosts` entry:
+The app repository must provide an executable `bin/tesseract` when it wants to
+support worktree lifecycle commands through this control plane.
 
-```bash
-sudo sh -c 'echo "100.101.231.49 app.docovia.tars.achan.bot api.docovia.tars.achan.bot gfease.docovia.tars.achan.bot docovia.tars.achan.bot" >> /etc/hosts'
-sudo dscacheutil -flushcache
-sudo killall -HUP mDNSResponder
-```
+## Resetting Runtime State
 
-## Reset Docovia
+Use these only when intentionally deleting remote runtime state.
 
-Use this only when intentionally deleting the remote Docovia runtime state.
+Remove a worktree:
 
 ```bash
 bin/tesseract worktree stop docovia smoke-test --host tars || true
 bin/tesseract worktree remove docovia smoke-test --host tars || true
+```
 
+Remove the Docovia main clone and tesseract metadata on `tars`:
+
+```bash
 ssh bot@tars 'rm -rf \
   /home/bot/repos/sprung-app \
   /home/bot/repos/sprung-worktrees \
@@ -242,10 +288,10 @@ ssh bot@tars 'rm -rf \
   /home/bot/.acme.sh/docovia.tars.achan.bot_ecc'
 ```
 
-Reset shared Postgres/Redis volumes:
+Reset shared PostgreSQL and Redis volumes:
 
 ```bash
 ssh achan@tars 'cd /home/achan/.config/tesseract/services && docker compose -f compose.yml down -v'
 ```
 
-Then start again from `Bootstrap`.
+Then start again from `Host Bootstrap`.

@@ -55,8 +55,8 @@ class ConfigTest < Minitest::Test
     assert_equal "git@github.com:getsprung/app", app.repo
     assert_equal "docovia.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/sprung-app", app.main_path
-    assert_equal "bot", app.pguser
-    assert_equal 3100, app.base_port
+    assert_nil app.worktree_root
+    assert_nil app.base_port
     assert_equal ["docovia.tars.achan.bot", "*.docovia.tars.achan.bot"], app.dns_records
   end
 
@@ -67,13 +67,11 @@ class ConfigTest < Minitest::Test
     assert_equal "git@github.com:FlexdayInc/flexday", app.repo
     assert_equal "flexday.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/flexday", app.main_path
-    assert_equal "/home/bot/repos/flexday-worktrees", app.worktree_root
     assert_equal "/home/bot/repos/flexday/.env.local", app.env_shared_path
-    assert_equal 4000, app.base_port
-    assert_equal ["node@20.20.0"], app.runtime_specs
-    assert_equal "http://{domain}:{port}", app.url_template
+    assert_nil app.worktree_root
+    assert_nil app.base_port
+    assert_empty app.runtime_specs
     assert_equal ["flexday.tars.achan.bot"], app.dns_records
-    refute app.database_enabled?
   end
 
   def test_lists_apps

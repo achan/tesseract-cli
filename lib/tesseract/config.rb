@@ -127,13 +127,13 @@ module Tesseract
       @id = required(data, "id")
       @repo = required(data, "repo")
       @main_path = required(data, "main_path")
-      @worktree_root = required(data, "worktree_root")
       @domain = required(data, "domain")
-      @base_port = Integer(required(data, "base_port"))
+      @worktree_root = data["worktree_root"]
+      @base_port = data.key?("base_port") ? Integer(data.fetch("base_port")) : nil
       @port_count = Integer(data.fetch("port_count", 99))
       @database_enabled = data.fetch("database", true)
-      @database_prefix = @database_enabled ? required(data, "database_prefix") : data.fetch("database_prefix", "")
-      @env_shared_path = required(data, "env_shared_path")
+      @database_prefix = data.fetch("database_prefix", "")
+      @env_shared_path = data.fetch("env_shared_path", File.join(@main_path, ".env.local"))
       @pguser = data.fetch("pguser", "achan")
       @processes = data.fetch("processes", {})
       @runtime_specs = Array(data.fetch("runtime_specs", []))

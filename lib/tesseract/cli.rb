@@ -1,4 +1,5 @@
 require "tesseract/config"
+require "tesseract/interactive_runner"
 require "tesseract/local_runner"
 require "tesseract/remote_runner"
 require "tesseract/shell"
@@ -32,6 +33,8 @@ module Tesseract
         services
       when "app"
         app
+      when "attach"
+        attach
       when "worktree"
         worktree
       when "dns"
@@ -95,6 +98,10 @@ module Tesseract
       else
         RemoteRunner.new(host, stdout: @stdout, stderr: @stderr, ssh_target: host.service_ssh_target)
       end
+    end
+
+    def interactive_runner
+      @interactive_runner ||= InteractiveRunner.new(host)
     end
 
     def app_profile(id)
@@ -359,9 +366,24 @@ EOF
       SH
     end
 
+    def attach
+      session = require_arg("tmux session")
+      return usage("unexpected attach argument: #{@argv.first}") unless @argv.empty?
+
+      interactive_runner.attach(session)
+    end
+
     def worktree
       action = @argv.shift
       return usage("missing worktree action") unless action
+
+      if action == "list"
+        app_id = @argv.shift
+        profiles = app_id ? [app_profile(app_id)] : @config.apps
+        return usage("unexpected worktree list argument: #{@argv.first}") unless @argv.empty?
+
+        return worktree_list(profiles)
+      end
 
       profile = app_profile(require_arg("app id"))
       slug = require_arg("worktree slug")
@@ -373,6 +395,49 @@ EOF
       else
         usage("unknown worktree action: #{action}")
       end
+    end
+
+    def worktree_list(profiles)
+      apps = profiles.map { |profile| "#{profile.id}\t#{profile.main_path}" }
+
+      runner.run(<<~SH)
+        set -u
+        found_file=$(mktemp)
+        rm -f "$found_file"
+        cleanup_worktree_list() {
+          rm -f "$found_file"
+        }
+        trap cleanup_worktree_list EXIT
+        printf "%-10s %-22s %-32s %s\\n" "APP" "WORKTREE" "TMUX" "URL"
+        while IFS="$(printf '\\t')" read -r app main_path; do
+          [ -n "$app" ] || continue
+          [ -d "$main_path" ] || continue
+          [ -x "$main_path/bin/tesseract" ] || continue
+
+          git -C "$main_path" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
+            case "$line" in
+              "worktree "*)
+                path=${line#worktree }
+                [ "$path" != "$main_path" ] || continue
+                slug=$(basename "$path")
+                status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
+                [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
+                [ -n "$tmux_session" ] || tmux_session="-"
+                [ -n "$url" ] || url="-"
+                printf "%-10s %-22s %-32s %s\\n" "$app" "$slug" "$tmux_session" "$url"
+                touch "$found_file"
+                ;;
+            esac
+          done
+        done <<'EOF'
+#{apps.join("\n")}
+EOF
+        if [ ! -f "$found_file" ]; then
+          echo "none"
+        fi
+      SH
     end
 
     def worktree_dispatch(profile, action, slug, extra_args)
@@ -716,6 +781,8 @@ EOF
           tesseract [--host HOST] services up|down|logs
           tesseract [--host HOST] app list
           tesseract [--host HOST] app doctor|clone|setup APP
+          tesseract [--host HOST] attach SESSION
+          tesseract [--host HOST] worktree list [APP]
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP

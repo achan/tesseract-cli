@@ -287,6 +287,32 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_app_pull_refuses_dirty_repo_before_pull
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "app", "pull", "docovia"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "cd '/home/bot/repos/sprung-app'"
+    assert_includes script, "main clone is missing at /home/bot/repos/sprung-app"
+    assert_includes script, "git status --porcelain"
+    assert_includes script, "refusing to pull origin main because /home/bot/repos/sprung-app has local changes"
+    assert_includes script, "git status --short >&2"
+    assert_includes script, "git pull --ff-only origin main"
+    assert_includes script, "pulled_origin_main=/home/bot/repos/sprung-app"
+    assert_empty stderr.string
+  end
+
   def test_cert_issue_requires_cloudflare_token
     old_token = ENV.delete("CLOUDFLARE_API_TOKEN")
 

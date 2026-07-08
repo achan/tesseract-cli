@@ -253,6 +253,9 @@ EOF
       when "clone"
         profile = app_profile(require_arg("app id"))
         app_clone(profile)
+      when "pull"
+        profile = app_profile(require_arg("app id"))
+        app_pull(profile)
       when "setup"
         profile = app_profile(require_arg("app id"))
         app_setup(profile)
@@ -329,6 +332,24 @@ EOF
           fi
         fi
         #{profile.worktree_root ? "mkdir -p #{Shell.escape(profile.worktree_root)}" : ":"}
+      SH
+    end
+
+    def app_pull(profile)
+      runner.run(<<~SH)
+        set -eu
+        cd #{Shell.escape(profile.main_path)}
+        if [ ! -d .git ]; then
+          echo "main clone is missing at #{profile.main_path}; run: tesseract app clone #{profile.id} --host #{host.id}" >&2
+          exit 1
+        fi
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "refusing to pull origin main because #{profile.main_path} has local changes" >&2
+          git status --short >&2
+          exit 1
+        fi
+        git pull --ff-only origin main
+        echo "pulled_origin_main=#{profile.main_path}"
       SH
     end
 
@@ -780,7 +801,7 @@ EOF
           tesseract [--host HOST] bootstrap
           tesseract [--host HOST] services up|down|logs
           tesseract [--host HOST] app list
-          tesseract [--host HOST] app doctor|clone|setup APP
+          tesseract [--host HOST] app doctor|clone|pull|setup APP
           tesseract [--host HOST] attach SESSION
           tesseract [--host HOST] worktree list [APP]
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]

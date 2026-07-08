@@ -36,7 +36,7 @@ bin/tesseract live
 bin/tesseract bootstrap
 bin/tesseract services up|down|logs
 bin/tesseract app list
-bin/tesseract app doctor|clone|setup APP
+bin/tesseract app doctor|clone|pull|setup APP
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
 bin/tesseract cert doctor|issue|renew APP
@@ -124,6 +124,13 @@ Check an app profile and remote clone:
 
 ```bash
 bin/tesseract app doctor docovia --host tars
+```
+
+Pull the selected app's main repo from `origin main`. This refuses to run when
+the main repo has local changes:
+
+```bash
+bin/tesseract app pull docovia --host tars
 ```
 
 ## Shared App Environment

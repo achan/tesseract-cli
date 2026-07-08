@@ -37,6 +37,8 @@ bin/tesseract bootstrap
 bin/tesseract services up|down|logs
 bin/tesseract app list
 bin/tesseract app doctor|clone|pull|setup APP
+bin/tesseract attach SESSION
+bin/tesseract worktree list [APP]
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
 bin/tesseract cert doctor|issue|renew APP
@@ -47,6 +49,8 @@ Examples:
 ```bash
 bin/tesseract app list
 bin/tesseract live
+bin/tesseract worktree list
+bin/tesseract attach docovia_patientnow_integration --host tars
 bin/tesseract worktree status docovia patientnow-integration
 bin/tesseract worktree start flexday calendar-refresh --host tars
 ```
@@ -174,6 +178,19 @@ Certificates are installed under the host cert directory. For Docovia on `tars`:
 ```
 
 ## Worktree Lifecycle
+
+List worktrees with their tmux session names and URLs:
+
+```bash
+bin/tesseract worktree list --host tars
+bin/tesseract worktree list docovia --host tars
+```
+
+Attach to a worktree's tmux session:
+
+```bash
+bin/tesseract attach docovia_smoke_test --host tars
+```
 
 Create a worktree from the app repository default branch:
 

@@ -19,6 +19,15 @@ class CLITest < Minitest::Test
     end
   end
 
+  class AttachCaptureRunner
+    attr_reader :session
+
+    def attach(session)
+      @session = session
+      0
+    end
+  end
+
   def run_cli(*argv)
     stdout = StringIO.new
     stderr = StringIO.new
@@ -119,6 +128,57 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_worktree_list_prints_worktree_tmux_session_and_url
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "worktree", "list"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "APP"
+    assert_includes script, "WORKTREE"
+    assert_includes script, "TMUX"
+    assert_includes script, "URL"
+    assert_includes script, "/home/bot/repos/sprung-app"
+    assert_includes script, "/home/bot/repos/flexday"
+    assert_includes script, "git -C \"$main_path\" worktree list --porcelain"
+    assert_includes script, "\"$main_path/bin/tesseract\" worktree status \"$slug\""
+    assert_includes script, "tmux_session="
+    assert_includes script, "session="
+    assert_includes script, "url="
+    assert_empty stderr.string
+  end
+
+  def test_worktree_list_can_filter_to_one_app
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "worktree", "list", "flexday"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "/home/bot/repos/flexday"
+    refute_includes script, "/home/bot/repos/sprung-app"
+    assert_empty stderr.string
+  end
+
   def test_worktree_start_dispatches_to_repo_tesseract
     stdout = StringIO.new
     stderr = StringIO.new
@@ -158,6 +218,49 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes script, "exec ./bin/tesseract 'worktree' 'remove' 'demo' '--force'"
     assert_empty stderr.string
+  end
+
+  def test_attach_uses_interactive_runner_for_tmux_session
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    attach_runner = AttachCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["attach", "docovia_exam_viewer_optimization", "--host", "tars"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+    cli.instance_variable_set(:@interactive_runner, attach_runner)
+
+    status = cli.run
+
+    assert_equal 0, status
+    assert_equal "docovia_exam_viewer_optimization", attach_runner.session
+    assert_empty runner.scripts
+    assert_empty stdout.string
+    assert_empty stderr.string
+  end
+
+  def test_attach_rejects_extra_arguments
+    status, _stdout, stderr = run_cli("attach", "docovia_exam_viewer_optimization", "extra", "--host", "local")
+
+    assert_equal 1, status
+    assert_includes stderr, "unexpected attach argument: extra"
+  end
+
+  def test_interactive_runner_builds_remote_tmux_attach_command
+    config = Tesseract::Config.new(File.expand_path("..", __dir__))
+    host = config.host("tars")
+    runner = Tesseract::InteractiveRunner.new(host)
+
+    command = runner.attach_command("docovia_exam_viewer_optimization")
+    script = command.last
+
+    assert_equal ["ssh", "-t", "-o", "SendEnv=none", "bot@tars"], command.first(5)
+    assert_includes script, "exec tmux attach -t '\\''docovia_exam_viewer_optimization'\\''"
+    refute_includes script, "worktree status"
   end
 
   def test_app_clone_preserves_seeded_env_only_directory

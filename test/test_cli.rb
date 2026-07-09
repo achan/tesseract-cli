@@ -74,14 +74,20 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "APP"
-    assert_includes script, "WORKTREE"
+    assert_includes script, "TMUX"
+    assert_includes script, "RSS"
     assert_includes script, "URL"
     assert_includes script, "/home/bot/repos/sprung-app"
     assert_includes script, "/home/bot/repos/flexday"
+    assert_includes script, "rss_for_path()"
+    assert_includes script, "/proc/[0-9]*/cwd"
+    assert_includes script, "VmRSS:"
+    assert_includes script, "format_rss()"
     assert_includes script, "git -C \"$main_path\" worktree list --porcelain"
     assert_includes script, "\"$main_path/bin/tesseract\" worktree status \"$slug\""
     assert_includes script, "running="
+    assert_includes script, "tmux_session="
+    assert_includes script, "session="
     assert_includes script, "url="
     assert_empty stderr.string
   end

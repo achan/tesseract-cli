@@ -239,13 +239,15 @@ bin/tesseract live --host tars
 Example output:
 
 ```text
-APP        WORKTREE               URL
-docovia    patientnow-integration https://app.docovia.tars.achan.bot:3102
-docovia    text-expander          https://app.docovia.tars.achan.bot:3103
+TMUX                              RSS URL
+docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102
+docovia_text_expander          1.4GiB https://app.docovia.tars.achan.bot:3103
 ```
 
 `live` scans each configured app's main clone, asks the repo-local adapter for
-each worktree status, and prints worktrees with `running=yes` and a URL.
+each worktree status, and prints running tmux sessions with their URLs. RSS is
+the aggregate resident memory for processes whose current working directory is
+the worktree path or one of its subdirectories.
 
 ## Browser Access
 

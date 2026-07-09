@@ -157,7 +157,39 @@ module Tesseract
           rm -f "$found_file"
         }
         trap cleanup_live EXIT
-        printf "%-10s %-22s %s\\n" "APP" "WORKTREE" "URL"
+
+        rss_for_path() {
+          target="$1"
+          total_kb=0
+          for cwd_link in /proc/[0-9]*/cwd; do
+            [ -e "$cwd_link" ] || continue
+            cwd=$(readlink -f "$cwd_link" 2>/dev/null || true)
+            case "$cwd" in
+              "$target"|"$target"/*)
+                pid=${cwd_link#/proc/}
+                pid=${pid%/cwd}
+                rss_kb=$(awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)
+                case "$rss_kb" in
+                  ""|*[!0-9]*) rss_kb=0 ;;
+                esac
+                total_kb=$((total_kb + rss_kb))
+                ;;
+            esac
+          done
+          printf "%s" "$total_kb"
+        }
+
+        format_rss() {
+          awk -v kb="$1" 'BEGIN {
+            if (kb >= 1048576) {
+              printf "%.1fGiB", kb / 1048576
+            } else {
+              printf "%dMiB", int((kb + 1023) / 1024)
+            }
+          }'
+        }
+
+        printf "%-32s %8s %s\\n" "TMUX" "RSS" "URL"
         while IFS="$(printf '\\t')" read -r app main_path; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
@@ -171,9 +203,12 @@ module Tesseract
                 slug=$(basename "$path")
                 status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
                 running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
+                tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
+                [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
                 url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
-                if [ "$running" = "yes" ] && [ -n "$url" ]; then
-                  printf "%-10s %-22s %s\\n" "$app" "$slug" "$url"
+                if [ "$running" = "yes" ] && [ -n "$tmux_session" ] && [ -n "$url" ]; then
+                  rss=$(format_rss "$(rss_for_path "$path")")
+                  printf "%-32s %8s %s\\n" "$tmux_session" "$rss" "$url"
                   touch "$found_file"
                 fi
                 ;;

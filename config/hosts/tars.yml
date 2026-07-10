@@ -6,6 +6,9 @@ base_repo_path: /home/bot/repos
 registry_dir: /home/bot/.local/share/tesseract/registry
 cert_dir: /home/bot/.local/share/tesseract/certs
 services_compose_path: /home/achan/.config/tesseract/services/compose.yml
+pages_dir: /home/bot/pages
+pages_domain: pages-tars.achan.bot
+pages_tunnel_token_path: /home/bot/.config/tesseract/pages-tunnel.token
 services:
   postgres:
     image: pgvector/pgvector:pg14

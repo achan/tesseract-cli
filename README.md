@@ -42,7 +42,30 @@ bin/tesseract worktree list [APP]
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
 bin/tesseract cert doctor|issue|renew APP
+bin/tesseract pages start|status|stop
 ```
+
+## Public HTML Pages
+
+Serve the selected host's pages directory publicly through its configured
+Cloudflare Tunnel, with Tailscale Funnel as the fallback for hosts without a
+custom pages domain:
+
+```bash
+bin/tesseract pages start --host tars
+bin/tesseract pages status --host tars
+bin/tesseract pages stop --host tars
+```
+
+On `tars`, place HTML and related assets in `/home/bot/pages`. The command runs
+a loopback-only Python static server in tmux and exposes it at
+`https://pages-tars.achan.bot/` through Cloudflare Tunnel. The directory is
+publicly reachable; do not place private files in it.
+
+The pages server returns an `X-Robots-Tag` no-index header on every response and
+publishes a root `robots.txt` that disallows all crawling. Recognized search and
+AI crawler user agents are also rejected with `403`. These controls are not a
+substitute for authentication because clients can misrepresent their user agent.
 
 Examples:
 

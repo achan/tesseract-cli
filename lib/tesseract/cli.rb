@@ -41,6 +41,8 @@ module Tesseract
         dns
       when "cert"
         cert
+      when "pages"
+        pages
       when "help", "-h", "--help"
         @stdout.puts(help)
         0
@@ -583,6 +585,166 @@ EOF
       run_acme_cert(profile, "renew")
     end
 
+    def pages
+      action = @argv.shift
+      return usage("missing pages action") unless action
+      return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
+      pages_dir = Shell.escape(host.pages_dir)
+      pages_port = 8080
+      pages_session = "tesseract_pages"
+      tunnel_session = "tesseract_pages_tunnel"
+      pages_server_path = File.join(File.dirname(host.pages_dir), ".local", "share", "tesseract", "pages_server.py")
+      custom_domain = host.pages_domain
+      tunnel_token_path = host.pages_tunnel_token_path
+
+      if custom_domain && tunnel_token_path.to_s.empty?
+        raise Config::Error, "pages_tunnel_token_path is required when pages_domain is configured"
+      end
+
+      case action
+      when "start"
+        runner.run(<<~SH)
+          set -eu
+          for cmd in python3 tmux; do
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+              echo "$cmd is required for pages" >&2
+              exit 1
+            fi
+          done
+          mkdir -p #{pages_dir}
+          mkdir -p #{Shell.escape(File.dirname(pages_server_path))}
+          cat > #{Shell.escape(pages_server_path)} <<'PY'
+          import argparse
+          from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+          class NoIndexHandler(SimpleHTTPRequestHandler):
+              crawler_tokens = (
+                  "amazonbot", "applebot", "bingbot", "bytespider", "ccbot",
+                  "claudebot", "duckduckbot", "facebookexternalhit", "googlebot",
+                  "gptbot", "linkedinbot", "meta-externalagent", "perplexitybot",
+                  "petalbot", "slurp", "yandexbot",
+              )
+
+              def is_crawler(self):
+                  user_agent = self.headers.get("User-Agent", "").lower()
+                  return any(token in user_agent for token in self.crawler_tokens)
+
+              def reject_crawler(self):
+                  self.send_response(403)
+                  self.send_header("Content-Type", "text/plain; charset=utf-8")
+                  self.end_headers()
+                  if self.command != "HEAD":
+                      self.wfile.write(b"Crawler access is disabled.\\n")
+
+              def do_GET(self):
+                  if self.path.split("?", 1)[0] != "/robots.txt" and self.is_crawler():
+                      self.reject_crawler()
+                      return
+                  super().do_GET()
+
+              def do_HEAD(self):
+                  if self.path.split("?", 1)[0] != "/robots.txt" and self.is_crawler():
+                      self.reject_crawler()
+                      return
+                  super().do_HEAD()
+
+              def end_headers(self):
+                  self.send_header(
+                      "X-Robots-Tag",
+                      "noindex, nofollow, noarchive, nosnippet, noimageindex",
+                  )
+                  super().end_headers()
+
+          parser = argparse.ArgumentParser()
+          parser.add_argument("--directory", required=True)
+          parser.add_argument("--port", type=int, default=8080)
+          args = parser.parse_args()
+          handler = lambda *handler_args, **kwargs: NoIndexHandler(
+              *handler_args, directory=args.directory, **kwargs
+          )
+          ThreadingHTTPServer(("127.0.0.1", args.port), handler).serve_forever()
+          PY
+          printf 'User-agent: *\nDisallow: /\n' > #{pages_dir}/robots.txt
+          if ! tmux has-session -t #{Shell.escape("=#{pages_session}")} 2>/dev/null; then
+            tmux new-session -d -s #{Shell.escape(pages_session)} \
+              "python3 #{Shell.escape(pages_server_path)} --port #{pages_port} --directory #{pages_dir}"
+          fi
+          #{pages_start_proxy_script(custom_domain, tunnel_token_path, tunnel_session, pages_port)}
+          echo "pages_dir=#{host.pages_dir}"
+        SH
+      when "status"
+        runner.run(<<~SH)
+          set -eu
+          echo "pages_dir=#{host.pages_dir}"
+          if tmux has-session -t #{Shell.escape("=#{pages_session}")} 2>/dev/null; then
+            echo "pages_server=running"
+          else
+            echo "pages_server=stopped"
+          fi
+          #{pages_status_proxy_script(custom_domain, tunnel_session)}
+        SH
+      when "stop"
+        runner.run(<<~SH)
+          set -eu
+          if command -v tailscale >/dev/null 2>&1; then
+            tailscale funnel reset >/dev/null 2>&1 || true
+          fi
+          tmux kill-session -t #{Shell.escape("=#{tunnel_session}")} 2>/dev/null || true
+          tmux kill-session -t #{Shell.escape("=#{pages_session}")} 2>/dev/null || true
+          echo "pages_stopped=yes"
+        SH
+      else
+        usage("unknown pages action: #{action}")
+      end
+    end
+
+    def pages_start_proxy_script(custom_domain, tunnel_token_path, tunnel_session, pages_port)
+      unless custom_domain
+        return <<~SH.chomp
+          if ! command -v tailscale >/dev/null 2>&1; then
+            echo "tailscale is required for pages" >&2
+            exit 1
+          fi
+          tailscale funnel --bg --yes #{pages_port}
+          tailscale funnel status
+        SH
+      end
+
+      cloudflared = "$HOME/.local/bin/cloudflared"
+      <<~SH.chomp
+        if [ ! -x "#{cloudflared}" ]; then
+          echo "cloudflared is required at #{cloudflared}" >&2
+          exit 1
+        fi
+        if [ ! -r #{Shell.escape(tunnel_token_path)} ]; then
+          echo "missing Cloudflare tunnel token: #{tunnel_token_path}" >&2
+          exit 1
+        fi
+        if command -v tailscale >/dev/null 2>&1; then
+          tailscale funnel reset >/dev/null 2>&1 || true
+        fi
+        if ! tmux has-session -t #{Shell.escape("=#{tunnel_session}")} 2>/dev/null; then
+          tmux new-session -d -s #{Shell.escape(tunnel_session)} \
+            "#{cloudflared} tunnel --no-autoupdate run --token-file #{Shell.escape(tunnel_token_path)}"
+        fi
+        echo "pages_url=https://#{custom_domain}/"
+      SH
+    end
+
+    def pages_status_proxy_script(custom_domain, tunnel_session)
+      return "tailscale funnel status" unless custom_domain
+
+      <<~SH.chomp
+        if tmux has-session -t #{Shell.escape("=#{tunnel_session}")} 2>/dev/null; then
+          echo "pages_tunnel=running"
+        else
+          echo "pages_tunnel=stopped"
+        fi
+        echo "pages_url=https://#{custom_domain}/"
+      SH
+    end
+
     def shell_profile_exports(profile, slug)
       sanitized = sanitize_slug(slug)
       registry = registry_path(profile)
@@ -842,6 +1004,7 @@ EOF
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP
+          tesseract [--host HOST] pages start|status|stop
 
         HOST defaults to #{DEFAULT_HOST}.
       HELP

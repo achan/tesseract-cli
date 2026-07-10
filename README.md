@@ -253,7 +253,7 @@ control plane while keeping different runtime details.
 
 ## Live Worktrees
 
-Show currently running app worktrees and their URLs:
+Show currently running app worktrees, their URLs, and stable changelog URLs:
 
 ```bash
 bin/tesseract live --host tars
@@ -262,15 +262,18 @@ bin/tesseract live --host tars
 Example output:
 
 ```text
-TMUX                              RSS URL
-docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102
-docovia_text_expander          1.4GiB https://app.docovia.tars.achan.bot:3103
+TMUX                              RSS URL                                              CHANGELOG
+docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102          https://pages-tars.achan.bot/p/<opaque-token>.html
+docovia_api_v2_foundation      1.4GiB https://app.docovia.tars.achan.bot:3104          https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 
 `live` scans each configured app's main clone, asks the repo-local adapter for
 each worktree status, and prints running tmux sessions with their URLs. RSS is
 the aggregate resident memory for processes whose current working directory is
-the worktree path or one of its subdirectories.
+the worktree path or one of its subdirectories. Changelog URLs use the stable
+opaque token registered by the changelog publisher when present, with a
+deterministic path-derived placeholder otherwise. A placeholder can return
+`404` until its changelog is published.
 
 ## Browser Access
 

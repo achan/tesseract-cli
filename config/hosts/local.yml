@@ -7,6 +7,7 @@ base_repo_path: /Users/achan/repos
 registry_dir: /Users/achan/.local/share/tesseract/registry
 cert_dir: /Users/achan/.local/share/tesseract/certs
 services_compose_path: /Users/achan/.config/tesseract/services/compose.yml
+pages_dir: /Users/achan/pages
 services:
   postgres:
     image: pgvector/pgvector:pg14

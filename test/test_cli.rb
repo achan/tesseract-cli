@@ -46,7 +46,58 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes stdout, "HOST defaults to tars"
     assert_includes stdout, "cert doctor|issue|renew APP"
+    assert_includes stdout, "pages start|status|stop"
     assert_empty stderr
+  end
+
+  def test_pages_start_serves_configured_directory_with_cloudflare_tunnel
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "pages", "start"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "mkdir -p '/home/bot/pages'"
+    assert_includes script, "class NoIndexHandler(SimpleHTTPRequestHandler):"
+    assert_includes script, '"X-Robots-Tag"'
+    assert_includes script, '"noindex, nofollow, noarchive, nosnippet, noimageindex"'
+    assert_includes script, '"googlebot"'
+    assert_includes script, "self.reject_crawler()"
+    assert_includes script, "printf 'User-agent: *\nDisallow: /\n' > '/home/bot/pages'/robots.txt"
+    assert_includes script, "python3 '/home/bot/.local/share/tesseract/pages_server.py' --port 8080 --directory '/home/bot/pages'"
+    assert_includes script, "$HOME/.local/bin/cloudflared tunnel --no-autoupdate run --token-file '/home/bot/.config/tesseract/pages-tunnel.token'"
+    assert_includes script, "pages_url=https://pages-tars.achan.bot/"
+    assert_empty stderr.string
+  end
+
+  def test_pages_stop_resets_tailscale_funnel
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "pages", "stop"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+
+    assert_equal 0, status
+    assert_includes runner.scripts.fetch(0), "tailscale funnel reset"
+    assert_includes runner.scripts.fetch(0), "tmux kill-session -t '=tesseract_pages_tunnel'"
+    assert_includes runner.scripts.fetch(0), "tmux kill-session -t '=tesseract_pages'"
+    assert_empty stderr.string
   end
 
   def test_app_list

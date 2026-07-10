@@ -45,7 +45,8 @@ module Tesseract
     DEFAULT_USER = "bot"
 
     attr_reader :id, :user, :service_user, :host_name, :base_repo_path,
-      :registry_dir, :cert_dir, :services_compose_path
+      :registry_dir, :cert_dir, :services_compose_path, :pages_dir,
+      :pages_domain, :pages_tunnel_token_path
 
     def initialize(data)
       @id = required(data, "id")
@@ -56,6 +57,9 @@ module Tesseract
       @registry_dir = required(data, "registry_dir")
       @cert_dir = required(data, "cert_dir")
       @services_compose_path = required(data, "services_compose_path")
+      @pages_dir = data.fetch("pages_dir", File.join(File.dirname(@base_repo_path), "pages"))
+      @pages_domain = data["pages_domain"]
+      @pages_tunnel_token_path = data["pages_tunnel_token_path"]
       @local = data.fetch("local", false)
       @services = data.fetch("services", {})
     end

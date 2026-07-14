@@ -125,7 +125,8 @@ module Tesseract
   class AppProfile
     attr_reader :id, :repo, :main_path, :worktree_root, :domain, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
-      :setup_commands, :env_overrides, :url_template, :dns_zone
+      :setup_commands, :env_overrides, :url_template, :dns_zone,
+      :worktree_driver, :default_branch
 
     def initialize(data)
       @id = required(data, "id")
@@ -133,6 +134,14 @@ module Tesseract
       @main_path = required(data, "main_path")
       @domain = required(data, "domain")
       @worktree_root = data["worktree_root"]
+      @worktree_driver = data.fetch("worktree_driver", "repository")
+      unless %w[repository git].include?(@worktree_driver)
+        raise Config::Error, "#{@id} profile has invalid worktree_driver: #{@worktree_driver}"
+      end
+      if @worktree_driver == "git" && @worktree_root.to_s.empty?
+        raise Config::Error, "#{@id} git worktree profile is missing worktree_root"
+      end
+      @default_branch = data.fetch("default_branch", "main")
       @base_port = data.key?("base_port") ? Integer(data.fetch("base_port")) : nil
       @port_count = Integer(data.fetch("port_count", 99))
       @database_enabled = data.fetch("database", true)
@@ -150,6 +159,10 @@ module Tesseract
 
     def database_enabled?
       @database_enabled
+    end
+
+    def git_worktrees?
+      worktree_driver == "git"
     end
 
     def dns_records

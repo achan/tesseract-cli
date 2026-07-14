@@ -328,6 +328,29 @@ env_shared_path: /home/bot/repos/example/.env.local
 The app repository must provide an executable `bin/tesseract` when it wants to
 support worktree lifecycle commands through this control plane.
 
+For an early-stage repository that only needs Git worktrees, configure the
+central Git-only driver instead:
+
+```yaml
+id: example
+repo: git@github.com:owner/example.git
+main_path: /home/bot/repos/example
+worktree_root: /home/bot/repos/example-worktrees
+worktree_driver: git
+default_branch: main
+domain: example.tars.achan.bot
+database: false
+dns_records: []
+```
+
+Git-only profiles support `worktree create`, `list`, `status`, and `remove`.
+When no branch is supplied, `create` uses `feature/<slug>`. Existing local or
+remote branches are reused; otherwise the branch is created from
+`default_branch`. The `start` action opens a tmux session rooted in the
+worktree using the conventional `<app>_<slug>` name, with hyphens converted
+to underscores; `stop` kills that session. Git-only profiles do not launch an
+app server, assign a URL, or run app-specific setup.
+
 ## Resetting Runtime State
 
 Use these only when intentionally deleting remote runtime state.

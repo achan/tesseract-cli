@@ -318,6 +318,136 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_signatures_worktree_create_uses_git_only_driver
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "worktree", "create", "signatures", "portal", "feature/portal"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "main_path='/home/bot/repos/signatures'"
+    assert_includes script, "worktree_root='/home/bot/repos/signatures-worktrees'"
+    assert_includes script, "branch='feature/portal'"
+    assert_includes script, 'git -C "$main_path" worktree add'
+    assert_includes script, 'worktree add --no-track -b "$branch"'
+    refute_includes script, "./bin/tesseract"
+    assert_empty stderr.string
+  end
+
+  def test_signatures_worktree_create_defaults_to_feature_branch
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "create", "signatures", "portal"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+
+    assert_equal 0, status
+    assert_includes runner.scripts.fetch(0), "branch='feature/portal'"
+    assert_empty stderr.string
+  end
+
+  def test_signatures_worktree_create_accepts_origin_prefixed_branch
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "create", "signatures", "portal", "origin/feature/portal"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+
+    assert_equal 0, status
+    assert_includes runner.scripts.fetch(0), "branch='feature/portal'"
+    assert_empty stderr.string
+  end
+
+  def test_signatures_worktree_start_creates_conventional_tmux_session
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "start", "signatures", "portal"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "path='/home/bot/repos/signatures-worktrees/portal'"
+    assert_includes script, "session='signatures_portal'"
+    assert_includes script, 'tmux new-session -d -s "$session" -n main -c "$path"'
+    assert_includes script, 'tmux has-session -t "=$session"'
+    assert_empty stderr.string
+  end
+
+  def test_signatures_worktree_stop_kills_conventional_tmux_session
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "stop", "signatures", "portal-refresh"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "session='signatures_portal_refresh'"
+    assert_includes script, 'tmux kill-session -t "=$session"'
+    assert_empty stderr.string
+  end
+
+  def test_signatures_worktree_remove_preserves_git_safety_by_default
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "remove", "signatures", "portal"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, 'git -C "$main_path" worktree remove  "$path"'
+    assert_includes script, "session='signatures_portal'"
+    assert_includes script, 'tmux kill-session -t "=$session"'
+    refute_includes script, "worktree remove --force"
+    assert_empty stderr.string
+  end
+
   def test_worktree_remove_passes_force_to_repo_tesseract
     stdout = StringIO.new
     stderr = StringIO.new

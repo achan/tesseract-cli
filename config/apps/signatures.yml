@@ -1,0 +1,9 @@
+id: signatures
+repo: git@github.com:achan/signatures.git
+main_path: /home/bot/repos/signatures
+worktree_root: /home/bot/repos/signatures-worktrees
+worktree_driver: git
+default_branch: main
+domain: signatures.tars.achan.bot
+database: false
+dns_records: []

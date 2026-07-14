@@ -74,8 +74,37 @@ class ConfigTest < Minitest::Test
     assert_equal ["flexday.tars.achan.bot"], app.dns_records
   end
 
+  def test_loads_signatures_git_worktree_profile
+    app = @config.app("signatures")
+
+    assert_equal "signatures", app.id
+    assert_equal "git@github.com:achan/signatures.git", app.repo
+    assert_equal "/home/bot/repos/signatures", app.main_path
+    assert_equal "/home/bot/repos/signatures-worktrees", app.worktree_root
+    assert_equal "git", app.worktree_driver
+    assert_equal "main", app.default_branch
+    assert app.git_worktrees?
+    refute app.database_enabled?
+    assert_empty app.dns_records
+  end
+
   def test_lists_apps
     assert_includes @config.apps.map(&:id), "docovia"
     assert_includes @config.apps.map(&:id), "flexday"
+    assert_includes @config.apps.map(&:id), "signatures"
+  end
+
+  def test_git_worktree_profile_requires_worktree_root
+    error = assert_raises(Tesseract::Config::Error) do
+      Tesseract::AppProfile.new(
+        "id" => "example",
+        "repo" => "git@github.com:example/example.git",
+        "main_path" => "/tmp/example",
+        "domain" => "example.test",
+        "worktree_driver" => "git"
+      )
+    end
+
+    assert_equal "example git worktree profile is missing worktree_root", error.message
   end
 end

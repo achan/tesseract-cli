@@ -42,7 +42,7 @@ bin/tesseract worktree list [APP]
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
 bin/tesseract cert doctor|issue|renew APP
-bin/tesseract pages list [--sort updated|title|url]
+bin/tesseract pages list [--sort updated|title|url] [--page N] [--per-page N]
 bin/tesseract pages start|status|stop
 ```
 
@@ -55,18 +55,20 @@ custom pages domain:
 ```bash
 bin/tesseract pages list --host tars
 bin/tesseract pages list --sort title --host tars
+bin/tesseract pages list --page 2 --host tars
 bin/tesseract pages start --host tars
 bin/tesseract pages status --host tars
 bin/tesseract pages stop --host tars
 ```
 
 `pages list` reads `~/.obfuscated_pages.json` as the selected host's runtime
-user (`bot` on `tars`) and prints all registered pages newest first with their
-updated date, title, and URL. Dates use `YY/MM/DD`. Output uses 100-character
-columns; long titles are truncated, while URLs remain complete and may extend
-past that width. Sort with `--sort updated|title|url`; updated is the default
-and sorts newest first, while title and URL sort ascending. Missing registries
-return `none`.
+user (`bot` on `tars`) and prints registered pages newest first with their
+updated date, title, and URL. Results are paginated with 10 rows per page by
+default. Select a page with `--page N` and change its size with `--per-page N`.
+Dates use `YY/MM/DD`. Output uses 100-character columns; long titles are
+truncated, while URLs remain complete and may extend past that width. Sort with
+`--sort updated|title|url`; updated is the default and sorts newest first, while
+title and URL sort ascending. Missing registries return `none`.
 
 On `tars`, place HTML and related assets in `/home/bot/pages`. The command runs
 a loopback-only Python static server in tmux and exposes it at

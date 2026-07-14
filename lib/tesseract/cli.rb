@@ -612,7 +612,6 @@ EOF
     def pages
       action = @argv.shift
       return usage("missing pages action") unless action
-      return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
 
       pages_dir = Shell.escape(host.pages_dir)
       pages_port = 8080
@@ -627,7 +626,72 @@ EOF
       end
 
       case action
+      when "list"
+        sort = "updated"
+        until @argv.empty?
+          argument = @argv.shift
+          if argument == "--sort"
+            sort = @argv.shift
+            return usage("--sort requires a value") unless sort
+          elsif argument.start_with?("--sort=")
+            sort = argument.split("=", 2).last
+          else
+            return usage("unexpected pages list argument: #{argument}")
+          end
+        end
+        return usage("invalid pages sort column: #{sort}") unless %w[updated title url].include?(sort)
+
+        runner.run("set -- #{Shell.escape(sort)}\n" + <<~'SH')
+          set -eu
+          registry="$HOME/.obfuscated_pages.json"
+          if [ ! -f "$registry" ]; then
+            echo "none"
+            exit 0
+          fi
+          ruby -EUTF-8:UTF-8 -rjson -rtime -e '
+            data = JSON.parse(File.read(ARGV.fetch(0)))
+            abort("invalid pages registry version") unless data["version"] == 1
+            pages = data["pages"]
+            abort("invalid pages registry: pages must be an array") unless pages.is_a?(Array)
+            clean = ->(value) { value.to_s.gsub(/[\t\r\n]+/, " ").strip }
+            truncate = lambda do |value, width|
+              value.length > width ? "#{value[0, width - 3]}..." : value
+            end
+            rows = pages.map do |page|
+              abort("invalid pages registry: page must be an object") unless page.is_a?(Hash)
+              url = page["url"]
+              title = page["title"]
+              updated_at = page["updated_at"]
+              unless [url, title, updated_at].all? { |value| value.is_a?(String) && !value.empty? }
+                abort("invalid pages registry: url, title, and updated_at are required")
+              end
+              [clean.call(updated_at), clean.call(title), clean.call(url), clean.call(page["description"])]
+            end
+            format_row = lambda do |updated_at, title, url|
+              format(
+                "%-8s  %-56s  %-32s",
+                updated_at,
+                truncate.call(title, 56),
+                url
+              )
+            end
+            sort = ARGV.fetch(1)
+            rows = case sort
+                   when "updated" then rows.sort_by { |row| row[0] }.reverse
+                   when "title" then rows.sort_by { |row| row[1].downcase }
+                   when "url" then rows.sort_by { |row| row[2].downcase }
+                   else abort("invalid pages sort column: #{sort}")
+                   end
+            puts format_row.call("UPDATED", "TITLE", "URL")
+            rows.each do |updated_at, title, url, _description|
+              date = Time.iso8601(updated_at).strftime("%y/%m/%d")
+              puts format_row.call(date, title, url)
+            end
+          ' "$registry" "$1"
+        SH
       when "start"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           for cmd in python3 tmux; do
@@ -698,6 +762,8 @@ EOF
           echo "pages_dir=#{host.pages_dir}"
         SH
       when "status"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           echo "pages_dir=#{host.pages_dir}"
@@ -709,6 +775,8 @@ EOF
           #{pages_status_proxy_script(custom_domain, tunnel_session)}
         SH
       when "stop"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           if command -v tailscale >/dev/null 2>&1; then
@@ -1028,6 +1096,7 @@ EOF
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP
+          tesseract [--host HOST] pages list [--sort updated|title|url]
           tesseract [--host HOST] pages start|status|stop
 
         HOST defaults to #{DEFAULT_HOST}.

@@ -46,8 +46,64 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes stdout, "HOST defaults to tars"
     assert_includes stdout, "cert doctor|issue|renew APP"
-    assert_includes stdout, "pages start|status|stop"
+    assert_includes stdout, "pages list [--sort updated|title|url]"
     assert_empty stderr
+  end
+
+  def test_pages_list_reads_conventional_host_registry
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "pages", "list"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, '$HOME/.obfuscated_pages.json'
+    assert_includes script, "ruby -EUTF-8:UTF-8 -rjson -rtime"
+    assert_includes script, "invalid pages registry version"
+    assert_includes script, '"%-8s  %-56s  %-32s"'
+    assert_includes script, 'Time.iso8601(updated_at).strftime("%y/%m/%d")'
+    assert_includes script, 'truncate.call(title, 56)'
+    refute_includes script, 'truncate.call(description'
+    assert_includes script, 'url'
+    assert_includes script, 'when "updated" then rows.sort_by { |row| row[0] }.reverse'
+    assert_empty stderr.string
+  end
+
+  def test_pages_list_sorts_by_title
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["pages", "list", "--sort", "title"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_equal "set -- 'title'", script.lines.first.strip
+    assert_includes script, 'when "title" then rows.sort_by { |row| row[1].downcase }'
+    assert_empty stderr.string
+  end
+
+  def test_pages_list_rejects_invalid_sort_column
+    status, _stdout, stderr = run_cli("pages", "list", "--sort", "description")
+
+    assert_equal 1, status
+    assert_includes stderr, "invalid pages sort column: description"
   end
 
   def test_pages_start_serves_configured_directory_with_cloudflare_tunnel

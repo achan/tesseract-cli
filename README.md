@@ -42,6 +42,7 @@ bin/tesseract worktree list [APP]
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
 bin/tesseract cert doctor|issue|renew APP
+bin/tesseract pages list [--sort updated|title|url]
 bin/tesseract pages start|status|stop
 ```
 
@@ -52,10 +53,20 @@ Cloudflare Tunnel, with Tailscale Funnel as the fallback for hosts without a
 custom pages domain:
 
 ```bash
+bin/tesseract pages list --host tars
+bin/tesseract pages list --sort title --host tars
 bin/tesseract pages start --host tars
 bin/tesseract pages status --host tars
 bin/tesseract pages stop --host tars
 ```
+
+`pages list` reads `~/.obfuscated_pages.json` as the selected host's runtime
+user (`bot` on `tars`) and prints all registered pages newest first with their
+updated date, title, and URL. Dates use `YY/MM/DD`. Output uses 100-character
+columns; long titles are truncated, while URLs remain complete and may extend
+past that width. Sort with `--sort updated|title|url`; updated is the default
+and sorts newest first, while title and URL sort ascending. Missing registries
+return `none`.
 
 On `tars`, place HTML and related assets in `/home/bot/pages`. The command runs
 a loopback-only Python static server in tmux and exposes it at
@@ -316,6 +327,29 @@ env_shared_path: /home/bot/repos/example/.env.local
 
 The app repository must provide an executable `bin/tesseract` when it wants to
 support worktree lifecycle commands through this control plane.
+
+For an early-stage repository that only needs Git worktrees, configure the
+central Git-only driver instead:
+
+```yaml
+id: example
+repo: git@github.com:owner/example.git
+main_path: /home/bot/repos/example
+worktree_root: /home/bot/repos/example-worktrees
+worktree_driver: git
+default_branch: main
+domain: example.tars.achan.bot
+database: false
+dns_records: []
+```
+
+Git-only profiles support `worktree create`, `list`, `status`, and `remove`.
+When no branch is supplied, `create` uses `feature/<slug>`. Existing local or
+remote branches are reused; otherwise the branch is created from
+`default_branch`. The `start` action opens a tmux session rooted in the
+worktree using the conventional `<app>_<slug>` name, with hyphens converted
+to underscores; `stop` kills that session. Git-only profiles do not launch an
+app server, assign a URL, or run app-specific setup.
 
 ## Resetting Runtime State
 

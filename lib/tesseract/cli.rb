@@ -326,15 +326,27 @@ EOF
     end
 
     def app_doctor(profile)
+      repo_tesseract_check = if profile.git_worktrees?
+        'echo "repo_tesseract=not_required"'
+      else
+        "[ -x #{Shell.escape(File.join(profile.main_path, "bin", "tesseract"))} ] && echo \"repo_tesseract=ok\" || echo \"repo_tesseract=missing\""
+      end
+      shared_env_check = if profile.git_worktrees?
+        'echo "shared_env=not_required"'
+      else
+        "[ -f #{Shell.escape(profile.env_shared_path)} ] && echo \"shared_env=ok\" || echo \"shared_env=missing\""
+      end
+
       runner.run(<<~SH)
         set -u
         echo "app=#{profile.id}"
         echo "repo=#{profile.repo}"
         echo "main_path=#{profile.main_path}"
         echo "domain=#{profile.domain}"
+        echo "worktree_driver=#{profile.worktree_driver}"
         [ -d #{Shell.escape(profile.main_path)} ] && echo "main_clone=ok" || echo "main_clone=missing"
-        [ -f #{Shell.escape(profile.env_shared_path)} ] && echo "shared_env=ok" || echo "shared_env=missing"
-        [ -x #{Shell.escape(File.join(profile.main_path, "bin", "tesseract"))} ] && echo "repo_tesseract=ok" || echo "repo_tesseract=missing"
+        #{shared_env_check}
+        #{repo_tesseract_check}
         for cmd in git tmux mise; do
           if command -v "$cmd" >/dev/null 2>&1; then
             echo "$cmd=ok"
@@ -480,7 +492,7 @@ EOF
     end
 
     def worktree_list(profiles)
-      apps = profiles.map { |profile| "#{profile.id}\t#{profile.main_path}" }
+      apps = profiles.map { |profile| "#{profile.id}\t#{profile.main_path}\t#{profile.worktree_driver}" }
 
       runner.run(<<~SH)
         set -u
@@ -491,10 +503,9 @@ EOF
         }
         trap cleanup_worktree_list EXIT
         printf "%-10s %-22s %-32s %s\\n" "APP" "WORKTREE" "TMUX" "URL"
-        while IFS="$(printf '\\t')" read -r app main_path; do
+        while IFS="$(printf '\\t')" read -r app main_path worktree_driver; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
-          [ -x "$main_path/bin/tesseract" ] || continue
 
           git -C "$main_path" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
             case "$line" in
@@ -502,10 +513,20 @@ EOF
                 path=${line#worktree }
                 [ "$path" != "$main_path" ] || continue
                 slug=$(basename "$path")
-                status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
-                tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
-                [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
-                url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
+                if [ "$worktree_driver" = "git" ]; then
+                  session="$(printf "%s_%s" "$app" "$(printf "%s" "$slug" | tr '-' '_' | tr -cd '[:alnum:]_')")"
+                  if tmux has-session -t "=$session" 2>/dev/null; then
+                    tmux_session="$session"
+                  else
+                    tmux_session="-"
+                  fi
+                  url="-"
+                else
+                  status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                  tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
+                  [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                  url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
+                fi
                 [ -n "$tmux_session" ] || tmux_session="-"
                 [ -n "$url" ] || url="-"
                 printf "%-10s %-22s %-32s %s\\n" "$app" "$slug" "$tmux_session" "$url"
@@ -523,6 +544,8 @@ EOF
     end
 
     def worktree_dispatch(profile, action, slug, extra_args)
+      return git_worktree_dispatch(profile, action, slug, extra_args) if profile.git_worktrees?
+
       args = ["worktree", action, slug, *extra_args].map { |arg| Shell.escape(arg) }.join(" ")
       runner.run(<<~SH)
         set -eu
@@ -533,6 +556,165 @@ EOF
         fi
         exec ./bin/tesseract #{args}
       SH
+    end
+
+    def git_worktree_dispatch(profile, action, slug, extra_args)
+      unless slug.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/)
+        return usage("invalid worktree slug: #{slug}")
+      end
+
+      case action
+      when "create"
+        return usage("unexpected worktree create argument: #{extra_args[1]}") if extra_args.length > 1
+
+        branch = extra_args.first || "feature/#{slug}"
+        git_worktree_create(profile, slug, branch)
+      when "status"
+        return usage("unexpected worktree status argument: #{extra_args.first}") unless extra_args.empty?
+
+        git_worktree_status(profile, slug)
+      when "remove"
+        force = extra_args == ["--force"]
+        unless extra_args.empty? || force
+          return usage("unexpected worktree remove argument: #{extra_args.first}")
+        end
+
+        git_worktree_remove(profile, slug, force: force)
+      when "start"
+        return usage("unexpected worktree start argument: #{extra_args.first}") unless extra_args.empty?
+
+        git_worktree_start(profile, slug)
+      when "stop"
+        return usage("unexpected worktree stop argument: #{extra_args.first}") unless extra_args.empty?
+
+        git_worktree_stop(profile, slug)
+      else
+        usage("unknown worktree action: #{action}")
+      end
+    end
+
+    def git_worktree_create(profile, slug, branch)
+      branch = branch.delete_prefix("origin/")
+
+      runner.run(<<~SH)
+        set -eu
+        main_path=#{Shell.escape(profile.main_path)}
+        worktree_root=#{Shell.escape(profile.worktree_root)}
+        path="$worktree_root/#{slug}"
+        branch=#{Shell.escape(branch)}
+        default_branch=#{Shell.escape(profile.default_branch)}
+
+        if [ ! -d "$main_path/.git" ]; then
+          echo "main clone is missing at #{profile.main_path}; run: tesseract app clone #{profile.id} --host #{host.id}" >&2
+          exit 1
+        fi
+        git check-ref-format --branch "$branch" >/dev/null
+        mkdir -p "$worktree_root"
+        if [ -e "$path" ]; then
+          echo "worktree already exists: $path"
+          exit 0
+        fi
+
+        git -C "$main_path" fetch --prune origin
+        if git -C "$main_path" show-ref --verify --quiet "refs/heads/$branch"; then
+          git -C "$main_path" worktree add "$path" "$branch"
+        elif git -C "$main_path" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+          git -C "$main_path" worktree add --track -b "$branch" "$path" "origin/$branch"
+        else
+          if git -C "$main_path" show-ref --verify --quiet "refs/remotes/origin/$default_branch"; then
+            base_ref="origin/$default_branch"
+          else
+            base_ref="$default_branch"
+          fi
+          git -C "$main_path" worktree add --no-track -b "$branch" "$path" "$base_ref"
+        fi
+
+        echo "created #{profile.id}/#{slug} branch=$branch path=$path"
+      SH
+    end
+
+    def git_worktree_status(profile, slug)
+      runner.run(<<~SH)
+        set -u
+        path=#{Shell.escape(File.join(profile.worktree_root, slug))}
+        session=#{Shell.escape(git_worktree_session(profile, slug))}
+        echo "app=#{profile.id}"
+        echo "slug=#{slug}"
+        echo "path=$path"
+        if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          echo "registered=yes"
+          echo "branch=$(git -C "$path" branch --show-current)"
+        else
+          echo "registered=no"
+        fi
+        if tmux has-session -t "=$session" 2>/dev/null; then
+          echo "running=yes"
+        else
+          echo "running=no"
+        fi
+        echo "tmux_session=$session"
+        echo "url=-"
+      SH
+    end
+
+    def git_worktree_start(profile, slug)
+      runner.run(<<~SH)
+        set -eu
+        path=#{Shell.escape(File.join(profile.worktree_root, slug))}
+        session=#{Shell.escape(git_worktree_session(profile, slug))}
+        if [ ! -d "$path" ] || ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          echo "worktree is missing: $path" >&2
+          exit 1
+        fi
+        if tmux has-session -t "=$session" 2>/dev/null; then
+          echo "session already running: $session"
+        else
+          tmux new-session -d -s "$session" -n main -c "$path"
+          echo "started $session"
+        fi
+        echo "path=$path"
+        echo "tmux_session=$session"
+        echo "url=-"
+      SH
+    end
+
+    def git_worktree_stop(profile, slug)
+      runner.run(<<~SH)
+        set -u
+        session=#{Shell.escape(git_worktree_session(profile, slug))}
+        if tmux has-session -t "=$session" 2>/dev/null; then
+          tmux kill-session -t "=$session"
+          echo "stopped $session"
+        else
+          echo "not running: $session"
+        fi
+      SH
+    end
+
+    def git_worktree_remove(profile, slug, force:)
+      force_arg = force ? "--force" : ""
+      runner.run(<<~SH)
+        set -eu
+        main_path=#{Shell.escape(profile.main_path)}
+        path=#{Shell.escape(File.join(profile.worktree_root, slug))}
+        session=#{Shell.escape(git_worktree_session(profile, slug))}
+        if [ ! -e "$path" ]; then
+          echo "worktree is missing: $path" >&2
+          exit 1
+        fi
+        if tmux has-session -t "=$session" 2>/dev/null; then
+          tmux kill-session -t "=$session"
+          echo "stopped $session"
+        fi
+        git -C "$main_path" worktree remove #{force_arg} "$path"
+        git -C "$main_path" worktree prune
+        echo "removed #{profile.id}/#{slug} path=$path"
+      SH
+    end
+
+    def git_worktree_session(profile, slug)
+      sanitized_slug = slug.tr("-", "_").gsub(/[^A-Za-z0-9_]/, "")
+      "#{profile.id}_#{sanitized_slug}"
     end
 
     def dns
@@ -612,7 +794,6 @@ EOF
     def pages
       action = @argv.shift
       return usage("missing pages action") unless action
-      return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
 
       pages_dir = Shell.escape(host.pages_dir)
       pages_port = 8080
@@ -627,7 +808,72 @@ EOF
       end
 
       case action
+      when "list"
+        sort = "updated"
+        until @argv.empty?
+          argument = @argv.shift
+          if argument == "--sort"
+            sort = @argv.shift
+            return usage("--sort requires a value") unless sort
+          elsif argument.start_with?("--sort=")
+            sort = argument.split("=", 2).last
+          else
+            return usage("unexpected pages list argument: #{argument}")
+          end
+        end
+        return usage("invalid pages sort column: #{sort}") unless %w[updated title url].include?(sort)
+
+        runner.run("set -- #{Shell.escape(sort)}\n" + <<~'SH')
+          set -eu
+          registry="$HOME/.obfuscated_pages.json"
+          if [ ! -f "$registry" ]; then
+            echo "none"
+            exit 0
+          fi
+          ruby -EUTF-8:UTF-8 -rjson -rtime -e '
+            data = JSON.parse(File.read(ARGV.fetch(0)))
+            abort("invalid pages registry version") unless data["version"] == 1
+            pages = data["pages"]
+            abort("invalid pages registry: pages must be an array") unless pages.is_a?(Array)
+            clean = ->(value) { value.to_s.gsub(/[\t\r\n]+/, " ").strip }
+            truncate = lambda do |value, width|
+              value.length > width ? "#{value[0, width - 3]}..." : value
+            end
+            rows = pages.map do |page|
+              abort("invalid pages registry: page must be an object") unless page.is_a?(Hash)
+              url = page["url"]
+              title = page["title"]
+              updated_at = page["updated_at"]
+              unless [url, title, updated_at].all? { |value| value.is_a?(String) && !value.empty? }
+                abort("invalid pages registry: url, title, and updated_at are required")
+              end
+              [clean.call(updated_at), clean.call(title), clean.call(url), clean.call(page["description"])]
+            end
+            format_row = lambda do |updated_at, title, url|
+              format(
+                "%-8s  %-56s  %-32s",
+                updated_at,
+                truncate.call(title, 56),
+                url
+              )
+            end
+            sort = ARGV.fetch(1)
+            rows = case sort
+                   when "updated" then rows.sort_by { |row| row[0] }.reverse
+                   when "title" then rows.sort_by { |row| row[1].downcase }
+                   when "url" then rows.sort_by { |row| row[2].downcase }
+                   else abort("invalid pages sort column: #{sort}")
+                   end
+            puts format_row.call("UPDATED", "TITLE", "URL")
+            rows.each do |updated_at, title, url, _description|
+              date = Time.iso8601(updated_at).strftime("%y/%m/%d")
+              puts format_row.call(date, title, url)
+            end
+          ' "$registry" "$1"
+        SH
       when "start"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           for cmd in python3 tmux; do
@@ -698,6 +944,8 @@ EOF
           echo "pages_dir=#{host.pages_dir}"
         SH
       when "status"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           echo "pages_dir=#{host.pages_dir}"
@@ -709,6 +957,8 @@ EOF
           #{pages_status_proxy_script(custom_domain, tunnel_session)}
         SH
       when "stop"
+        return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
+
         runner.run(<<~SH)
           set -eu
           if command -v tailscale >/dev/null 2>&1; then
@@ -1028,6 +1278,7 @@ EOF
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP
+          tesseract [--host HOST] pages list [--sort updated|title|url]
           tesseract [--host HOST] pages start|status|stop
 
         HOST defaults to #{DEFAULT_HOST}.

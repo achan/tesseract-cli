@@ -1,5 +1,8 @@
 require "minitest/autorun"
+require "json"
+require "open3"
 require "stringio"
+require "tmpdir"
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -46,7 +49,7 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes stdout, "HOST defaults to tars"
     assert_includes stdout, "cert doctor|issue|renew APP"
-    assert_includes stdout, "pages list [--sort updated|title|url]"
+    assert_includes stdout, "pages list [--sort updated|title|url] [--page N] [--per-page N]"
     assert_empty stderr
   end
 
@@ -66,6 +69,7 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
+    assert_equal "set -- 'updated' '1' '10'", script.lines.first.strip
     assert_includes script, '$HOME/.obfuscated_pages.json'
     assert_includes script, "ruby -EUTF-8:UTF-8 -rjson -rtime"
     assert_includes script, "invalid pages registry version"
@@ -75,6 +79,8 @@ class CLITest < Minitest::Test
     refute_includes script, 'truncate.call(description'
     assert_includes script, 'url'
     assert_includes script, 'when "updated" then rows.sort_by { |row| row[0] }.reverse'
+    assert_includes script, 'rows.slice((page - 1) * per_page, per_page)'
+    assert_includes script, 'puts "Page #{page}/#{page_count} (#{pages.length} total)"'
     assert_empty stderr.string
   end
 
@@ -94,9 +100,75 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_equal "set -- 'title'", script.lines.first.strip
+    assert_equal "set -- 'title' '1' '10'", script.lines.first.strip
     assert_includes script, 'when "title" then rows.sort_by { |row| row[1].downcase }'
     assert_empty stderr.string
+  end
+
+  def test_pages_list_accepts_page_and_per_page
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["pages", "list", "--page", "2", "--per-page=5"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_equal "set -- 'updated' '2' '5'", script.lines.first.strip
+    assert_empty stderr.string
+  end
+
+  def test_pages_list_paginates_registry_output
+    Dir.mktmpdir do |home|
+      pages = 12.times.map do |index|
+        number = index + 1
+        {
+          "url" => "https://example.com/page-#{number}",
+          "title" => "Page #{number}",
+          "updated_at" => format("2026-07-%02dT12:00:00Z", number)
+        }
+      end
+      File.write(
+        File.join(home, ".obfuscated_pages.json"),
+        JSON.generate("version" => 1, "pages" => pages)
+      )
+
+      first_page = pages_list_script
+      stdout, stderr, status = Open3.capture3({"HOME" => home}, "sh", stdin_data: first_page)
+
+      assert status.success?, stderr
+      assert_equal 10, stdout.lines.grep(/^26\/07\//).length
+      assert_includes stdout, "Page 12"
+      assert_includes stdout, "Page 1/2 (12 total)"
+
+      second_page = pages_list_script("--page", "2")
+      stdout, stderr, status = Open3.capture3({"HOME" => home}, "sh", stdin_data: second_page)
+
+      assert status.success?, stderr
+      assert_equal 2, stdout.lines.grep(/^26\/07\//).length
+      assert_includes stdout, "Page 2/2 (12 total)"
+    end
+  end
+
+  def test_pages_list_rejects_invalid_page
+    status, _stdout, stderr = run_cli("pages", "list", "--page", "0")
+
+    assert_equal 1, status
+    assert_includes stderr, "invalid pages page: 0"
+  end
+
+  def test_pages_list_rejects_invalid_per_page
+    status, _stdout, stderr = run_cli("pages", "list", "--per-page", "many")
+
+    assert_equal 1, status
+    assert_includes stderr, "invalid pages per-page: many"
   end
 
   def test_pages_list_rejects_invalid_sort_column
@@ -704,5 +776,20 @@ class CLITest < Minitest::Test
 
     assert_equal 1, status
     assert_includes stderr, "unknown command"
+  end
+
+  private
+
+  def pages_list_script(*arguments)
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["pages", "list", *arguments],
+      stdout: StringIO.new,
+      stderr: StringIO.new,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+    assert_equal 0, cli.run
+    runner.scripts.fetch(0)
   end
 end

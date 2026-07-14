@@ -810,6 +810,8 @@ EOF
       case action
       when "list"
         sort = "updated"
+        page = "1"
+        per_page = "10"
         until @argv.empty?
           argument = @argv.shift
           if argument == "--sort"
@@ -817,13 +819,25 @@ EOF
             return usage("--sort requires a value") unless sort
           elsif argument.start_with?("--sort=")
             sort = argument.split("=", 2).last
+          elsif argument == "--page"
+            page = @argv.shift
+            return usage("--page requires a value") unless page
+          elsif argument.start_with?("--page=")
+            page = argument.split("=", 2).last
+          elsif argument == "--per-page"
+            per_page = @argv.shift
+            return usage("--per-page requires a value") unless per_page
+          elsif argument.start_with?("--per-page=")
+            per_page = argument.split("=", 2).last
           else
             return usage("unexpected pages list argument: #{argument}")
           end
         end
         return usage("invalid pages sort column: #{sort}") unless %w[updated title url].include?(sort)
+        return usage("invalid pages page: #{page}") unless page.match?(/\A[1-9]\d*\z/)
+        return usage("invalid pages per-page: #{per_page}") unless per_page.match?(/\A[1-9]\d*\z/)
 
-        runner.run("set -- #{Shell.escape(sort)}\n" + <<~'SH')
+        runner.run("set -- #{Shell.escape(sort)} #{Shell.escape(page)} #{Shell.escape(per_page)}\n" + <<~'SH')
           set -eu
           registry="$HOME/.obfuscated_pages.json"
           if [ ! -f "$registry" ]; then
@@ -864,12 +878,18 @@ EOF
                    when "url" then rows.sort_by { |row| row[2].downcase }
                    else abort("invalid pages sort column: #{sort}")
                    end
+            page = Integer(ARGV.fetch(2), 10)
+            per_page = Integer(ARGV.fetch(3), 10)
+            page_count = [(rows.length + per_page - 1) / per_page, 1].max
+            abort("pages page #{page} exceeds last page #{page_count}") if page > page_count
+            rows = rows.slice((page - 1) * per_page, per_page) || []
             puts format_row.call("UPDATED", "TITLE", "URL")
             rows.each do |updated_at, title, url, _description|
               date = Time.iso8601(updated_at).strftime("%y/%m/%d")
               puts format_row.call(date, title, url)
             end
-          ' "$registry" "$1"
+            puts "Page #{page}/#{page_count} (#{pages.length} total)"
+          ' "$registry" "$1" "$2" "$3"
         SH
       when "start"
         return usage("unexpected pages argument: #{@argv.first}") unless @argv.empty?
@@ -1278,7 +1298,7 @@ EOF
           tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP
-          tesseract [--host HOST] pages list [--sort updated|title|url]
+          tesseract [--host HOST] pages list [--sort updated|title|url] [--page N] [--per-page N]
           tesseract [--host HOST] pages start|status|stop
 
         HOST defaults to #{DEFAULT_HOST}.

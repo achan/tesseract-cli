@@ -713,8 +713,7 @@ EOF
     end
 
     def git_worktree_session(profile, slug)
-      sanitized_slug = slug.tr("-", "_").gsub(/[^A-Za-z0-9_]/, "")
-      "#{profile.id}_#{sanitized_slug}"
+      "#{profile.id}_#{slug}".tr("-", "_").gsub(/[^A-Za-z0-9_]/, "")
     end
 
     def dns

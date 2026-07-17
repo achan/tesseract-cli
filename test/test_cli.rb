@@ -439,6 +439,54 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_chrome_extensions_worktree_create_uses_git_only_driver
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "create", "chrome-extensions", "manifest-v3"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "main_path='/home/bot/repos/chrome-extensions'"
+    assert_includes script, "worktree_root='/home/bot/repos/chrome-extensions-worktrees'"
+    assert_includes script, "branch='feature/manifest-v3'"
+    assert_includes script, 'git -C "$main_path" worktree add'
+    refute_includes script, "./bin/tesseract"
+    assert_empty stderr.string
+  end
+
+  def test_chrome_extensions_worktree_start_creates_normalized_tmux_session
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "start", "chrome-extensions", "manifest-v3"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "path='/home/bot/repos/chrome-extensions-worktrees/manifest-v3'"
+    assert_includes script, "session='chrome_extensions_manifest_v3'"
+    assert_includes script, 'tmux new-session -d -s "$session" -n main -c "$path"'
+    assert_includes script, 'echo "url=-"'
+    refute_includes script, "url=https://"
+    assert_empty stderr.string
+  end
+
   def test_signatures_worktree_create_defaults_to_feature_branch
     stdout = StringIO.new
     stderr = StringIO.new

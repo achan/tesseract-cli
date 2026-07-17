@@ -156,6 +156,8 @@ bin/tesseract app setup docovia --host tars
 bin/tesseract app clone flexday --host tars
 bin/tesseract app setup flexday --host tars
 
+bin/tesseract app clone chrome-extensions --host tars
+
 bin/tesseract app clone tesseract-web --host tars
 bin/tesseract app setup tesseract-web --host tars
 ```
@@ -261,6 +263,16 @@ bin/tesseract worktree start tesseract-web ingestion-ui --host tars
 bin/tesseract worktree status tesseract-web ingestion-ui --host tars
 ```
 
+Docovia Chrome Extensions uses the Git-only lifecycle with the
+`chrome-extensions` app id. Starting it opens a tmux session rooted in the
+worktree; it does not launch a web server or assign a URL:
+
+```bash
+bin/tesseract worktree create chrome-extensions manifest-v3 --host tars
+bin/tesseract worktree start chrome-extensions manifest-v3 --host tars
+bin/tesseract worktree status chrome-extensions manifest-v3 --host tars
+```
+
 `stop` kills the app's tmux session and processes but leaves the worktree,
 database, env files, and registry entry in place. `remove` is destructive: it
 stops the session, removes the git worktree, prunes registry metadata, and lets
@@ -363,7 +375,8 @@ database: false
 dns_records: []
 ```
 
-Git-only profiles support `worktree create`, `list`, `status`, and `remove`.
+Git-only profiles support `worktree create`, `start`, `list`, `status`, `stop`,
+and `remove`.
 When no branch is supplied, `create` uses `feature/<slug>`. Existing local or
 remote branches are reused; otherwise the branch is created from
 `default_branch`. The `start` action opens a tmux session rooted in the

@@ -88,6 +88,20 @@ class ConfigTest < Minitest::Test
     assert_empty app.dns_records
   end
 
+  def test_loads_chrome_extensions_git_worktree_profile
+    app = @config.app("chrome-extensions")
+
+    assert_equal "chrome-extensions", app.id
+    assert_equal "git@github.com:getsprung/chrome-extensions.git", app.repo
+    assert_equal "/home/bot/repos/chrome-extensions", app.main_path
+    assert_equal "/home/bot/repos/chrome-extensions-worktrees", app.worktree_root
+    assert_equal "git", app.worktree_driver
+    assert_equal "main", app.default_branch
+    assert app.git_worktrees?
+    refute app.database_enabled?
+    assert_empty app.dns_records
+  end
+
   def test_loads_tesseract_web_profile
     app = @config.app("tesseract-web")
 
@@ -104,6 +118,7 @@ class ConfigTest < Minitest::Test
   end
 
   def test_lists_apps
+    assert_includes @config.apps.map(&:id), "chrome-extensions"
     assert_includes @config.apps.map(&:id), "docovia"
     assert_includes @config.apps.map(&:id), "flexday"
     assert_includes @config.apps.map(&:id), "signatures"

@@ -1,0 +1,9 @@
+id: chrome-extensions
+repo: git@github.com:getsprung/chrome-extensions.git
+main_path: /home/bot/repos/chrome-extensions
+worktree_root: /home/bot/repos/chrome-extensions-worktrees
+worktree_driver: git
+default_branch: main
+domain: chrome-extensions.tars.achan.bot
+database: false
+dns_records: []

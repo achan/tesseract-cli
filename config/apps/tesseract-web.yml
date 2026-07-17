@@ -1,0 +1,10 @@
+id: tesseract-web
+repo: git@github.com:achan/tesseract.git
+main_path: /home/bot/repos/tesseract-web
+worktree_root: /home/bot/repos/tesseract-web-worktrees
+domain: tesseract-web.tars.achan.bot
+base_port: 6100
+port_count: 99
+dns_records:
+  - "{domain}"
+env_shared_path: /home/bot/repos/tesseract-web/.env.local

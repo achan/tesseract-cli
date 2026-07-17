@@ -234,6 +234,7 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes stdout, "docovia"
     assert_includes stdout, "flexday"
+    assert_includes stdout, "tesseract-web"
     assert_empty stderr
   end
 
@@ -259,6 +260,7 @@ class CLITest < Minitest::Test
     assert_includes script, "CHANGELOG"
     assert_includes script, "/home/bot/repos/sprung-app"
     assert_includes script, "/home/bot/repos/flexday"
+    assert_includes script, "/home/bot/repos/tesseract-web"
     assert_includes script, "rss_for_path()"
     assert_includes script, "/proc/[0-9]*/cwd"
     assert_includes script, "VmRSS:"
@@ -340,6 +342,7 @@ class CLITest < Minitest::Test
     assert_includes script, "URL"
     assert_includes script, "/home/bot/repos/sprung-app"
     assert_includes script, "/home/bot/repos/flexday"
+    assert_includes script, "/home/bot/repos/tesseract-web"
     assert_includes script, "git -C \"$main_path\" worktree list --porcelain"
     assert_includes script, "\"$main_path/bin/tesseract\" worktree status \"$slug\""
     assert_includes script, "tmux_session="
@@ -386,6 +389,27 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes script, "cd '/home/bot/repos/flexday'"
+    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'demo'"
+    assert_empty stderr.string
+  end
+
+  def test_tesseract_web_worktree_start_dispatches_to_repo_adapter
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "worktree", "start", "tesseract-web", "demo"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "cd '/home/bot/repos/tesseract-web'"
     assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'demo'"
     assert_empty stderr.string
   end

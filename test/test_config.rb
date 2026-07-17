@@ -88,10 +88,26 @@ class ConfigTest < Minitest::Test
     assert_empty app.dns_records
   end
 
+  def test_loads_tesseract_web_profile
+    app = @config.app("tesseract-web")
+
+    assert_equal "tesseract-web", app.id
+    assert_equal "git@github.com:achan/tesseract.git", app.repo
+    assert_equal "/home/bot/repos/tesseract-web", app.main_path
+    assert_equal "/home/bot/repos/tesseract-web-worktrees", app.worktree_root
+    assert_equal "tesseract-web.tars.achan.bot", app.domain
+    assert_equal 6100, app.base_port
+    assert_equal 99, app.port_count
+    assert_equal "/home/bot/repos/tesseract-web/.env.local", app.env_shared_path
+    assert_equal "repository", app.worktree_driver
+    assert_equal ["tesseract-web.tars.achan.bot"], app.dns_records
+  end
+
   def test_lists_apps
     assert_includes @config.apps.map(&:id), "docovia"
     assert_includes @config.apps.map(&:id), "flexday"
     assert_includes @config.apps.map(&:id), "signatures"
+    assert_includes @config.apps.map(&:id), "tesseract-web"
   end
 
   def test_git_worktree_profile_requires_worktree_root

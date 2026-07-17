@@ -155,6 +155,9 @@ bin/tesseract app setup docovia --host tars
 
 bin/tesseract app clone flexday --host tars
 bin/tesseract app setup flexday --host tars
+
+bin/tesseract app clone tesseract-web --host tars
+bin/tesseract app setup tesseract-web --host tars
 ```
 
 `app setup` uses the app repository runtime files through `mise`; no global
@@ -180,6 +183,7 @@ Each app profile points at a shared env file on the host:
 ```text
 docovia: /home/bot/repos/sprung-app/.env.local
 flexday: /home/bot/repos/flexday/.env.local
+tesseract-web: /home/bot/repos/tesseract-web/.env.local
 ```
 
 Worktree creation links or copies from the app's shared env according to the
@@ -249,6 +253,14 @@ bin/tesseract worktree stop docovia smoke-test --host tars
 bin/tesseract worktree remove docovia smoke-test --host tars
 ```
 
+Tesseract web worktrees use the same lifecycle with the `tesseract-web` app id:
+
+```bash
+bin/tesseract worktree create tesseract-web ingestion-ui --host tars
+bin/tesseract worktree start tesseract-web ingestion-ui --host tars
+bin/tesseract worktree status tesseract-web ingestion-ui --host tars
+```
+
 `stop` kills the app's tmux session and processes but leaves the worktree,
 database, env files, and registry entry in place. `remove` is destructive: it
 stops the session, removes the git worktree, prunes registry metadata, and lets
@@ -303,6 +315,12 @@ Flexday URLs usually look like:
 
 ```text
 http://flexday.tars.achan.bot:4001
+```
+
+Tesseract web URLs use the reserved `6101-6199` development range:
+
+```text
+https://tesseract-web.tars.achan.bot:6101
 ```
 
 If the browser reports `ERR_NAME_NOT_RESOLVED`, verify DNS first:

@@ -651,8 +651,20 @@ class CLITest < Minitest::Test
     script = command.last
 
     assert_equal ["ssh", "-t", "-o", "SendEnv=none", "bot@tars"], command.first(5)
+    assert_includes script, "export PATH="
     assert_includes script, "exec tmux attach -t '\\''docovia_exam_viewer_optimization'\\''"
     refute_includes script, "worktree status"
+  end
+
+  def test_interactive_runner_includes_case_extra_path
+    config = Tesseract::Config.new(File.expand_path("..", __dir__))
+    host = config.host("case")
+    runner = Tesseract::InteractiveRunner.new(host)
+
+    script = runner.attach_command("eso_pr_2").last
+
+    assert_includes script, "/Users/bot/.homebrew/bin"
+    assert_includes script, "exec tmux attach -t '\\''eso_pr_2'\\''"
   end
 
   def test_app_clone_preserves_seeded_env_only_directory

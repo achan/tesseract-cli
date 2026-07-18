@@ -107,7 +107,7 @@ module Tesseract
     end
 
     def app_profile(id)
-      @config.app(id)
+      @config.app(id, host: host)
     end
 
     def doctor
@@ -149,7 +149,7 @@ module Tesseract
     end
 
     def live
-      apps = @config.apps.map { |profile| "#{profile.id}\t#{profile.main_path}" }
+      apps = @config.apps(host: host).map { |profile| "#{profile.id}\t#{profile.main_path}" }
       changelog_registry = File.join(File.dirname(host.base_repo_path), ".codex", "state", "worktree-changelogs.json")
       changelog_base_url = host.pages_domain ? "https://#{host.pages_domain}" : ""
 
@@ -306,7 +306,7 @@ EOF
 
       case action
       when "list"
-        @config.apps.each { |profile| @stdout.puts(profile.id) }
+        @config.apps(host: host).each { |profile| @stdout.puts(profile.id) }
         0
       when "doctor"
         profile = app_profile(require_arg("app id"))
@@ -473,7 +473,7 @@ EOF
 
       if action == "list"
         app_id = @argv.shift
-        profiles = app_id ? [app_profile(app_id)] : @config.apps
+        profiles = app_id ? [app_profile(app_id)] : @config.apps(host: host)
         return usage("unexpected worktree list argument: #{@argv.first}") unless @argv.empty?
 
         return worktree_list(profiles)
@@ -615,7 +615,9 @@ EOF
           exit 0
         fi
 
-        git -C "$main_path" fetch --prune origin
+        if #{profile.fetch_on_create ? "true" : "false"}; then
+          git -C "$main_path" fetch --prune origin
+        fi
         if git -C "$main_path" show-ref --verify --quiet "refs/heads/$branch"; then
           git -C "$main_path" worktree add "$path" "$branch"
         elif git -C "$main_path" show-ref --verify --quiet "refs/remotes/origin/$branch"; then

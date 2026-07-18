@@ -1,0 +1,9 @@
+id: eso
+repo: git@github.com:achan/eso.git
+main_path: /home/bot/repos/eso
+worktree_root: /home/bot/repos/eso-worktrees
+worktree_driver: git
+default_branch: main
+domain: eso.tars.achan.bot
+database: false
+dns_records: []

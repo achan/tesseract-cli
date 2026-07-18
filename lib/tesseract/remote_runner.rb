@@ -22,6 +22,8 @@ module Tesseract
         "-o",
         "SendEnv=none",
         @ssh_target,
+        "env",
+        "PATH=#{@host.command_path}",
         "bash",
         "-s",
         stdin_data: script

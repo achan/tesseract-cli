@@ -7,6 +7,8 @@ registry_dir: /Users/bot/.local/share/tesseract/registry
 cert_dir: /Users/bot/.local/share/tesseract/certs
 services_compose_path: /Users/achan/.config/tesseract/services/compose.yml
 pages_dir: /Users/bot/pages
+pages_domain: pages-case.achan.bot
+pages_tunnel_token_path: /Users/bot/.config/tesseract/pages-tunnel.token
 extra_path:
   - /Users/bot/.homebrew/bin
   - /Users/bot/.homebrew/sbin

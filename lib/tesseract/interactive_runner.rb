@@ -13,6 +13,7 @@ module Tesseract
     def attach_command(session)
       script = <<~SH
         set -eu
+        export PATH=#{Shell.escape(@host.command_path)}
         exec tmux attach -t #{Shell.escape(session)}
       SH
 

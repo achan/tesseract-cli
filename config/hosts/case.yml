@@ -1,0 +1,25 @@
+id: case
+ssh_target: case.local
+user: bot
+service_user: achan
+base_repo_path: /Users/bot/repos
+registry_dir: /Users/bot/.local/share/tesseract/registry
+cert_dir: /Users/bot/.local/share/tesseract/certs
+services_compose_path: /Users/achan/.config/tesseract/services/compose.yml
+pages_dir: /Users/bot/pages
+extra_path:
+  - /Users/bot/.homebrew/bin
+  - /Users/bot/.homebrew/sbin
+app_domain_suffix: case.achan.bot
+app_path_replacements:
+  /home/bot/repos: /Users/bot/repos
+services:
+  postgres:
+    image: pgvector/pgvector:pg14
+    port: 5432
+    user: bot
+    password: dev
+  redis:
+    image: redis:7-alpine
+    port: 6379
+    databases: 256

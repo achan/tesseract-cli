@@ -126,6 +126,30 @@ bin/tesseract services up --host tars
 bin/tesseract services logs --host tars
 ```
 
+For a new macOS execution host such as `case.local`, first create the runtime
+user and authorize this control machine's SSH key on the Mac itself:
+
+```bash
+mkdir -p ~/.ssh
+echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIfNnZk/K9XXbP7y7oWoPVZmCdBzBu3JTOj8/FQfhe2J ac@amoschan.com' >> ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+
+sudo sysadminctl -addUser bot -fullName "Tesseract Bot" -home /Users/bot -shell /bin/zsh -password 'CHANGE-ME'
+sudo mkdir -p /Users/bot/.ssh /Users/bot/repos
+echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIfNnZk/K9XXbP7y7oWoPVZmCdBzBu3JTOj8/FQfhe2J ac@amoschan.com' | sudo tee -a /Users/bot/.ssh/authorized_keys >/dev/null
+sudo chown -R bot:staff /Users/bot/.ssh /Users/bot/repos
+sudo chmod 700 /Users/bot/.ssh
+sudo chmod 600 /Users/bot/.ssh/authorized_keys
+```
+
+Then verify and bootstrap it from the control machine:
+
+```bash
+bin/tesseract doctor --host case
+bin/tesseract bootstrap --host case
+```
+
 On `tars`, the shared services are defined at:
 
 ```text

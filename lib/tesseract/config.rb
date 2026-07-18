@@ -19,16 +19,20 @@ module Tesseract
       HostProfile.new(load_yaml(path))
     end
 
-    def app(id)
+    def app(id, host: nil)
       path = File.join(@root, "config", "apps", "#{id}.yml")
       raise Error, "unknown app: #{id}" unless File.file?(path)
 
-      AppProfile.new(load_yaml(path))
+      data = load_yaml(path)
+      data = host.rewrite_app_profile(data) if host
+      AppProfile.new(data)
     end
 
-    def apps
+    def apps(host: nil)
       Dir.glob(File.join(@root, "config", "apps", "*.yml")).sort.map do |path|
-        AppProfile.new(load_yaml(path))
+        data = load_yaml(path)
+        data = host.rewrite_app_profile(data) if host
+        AppProfile.new(data)
       end
     end
 
@@ -46,7 +50,8 @@ module Tesseract
 
     attr_reader :id, :user, :service_user, :host_name, :base_repo_path,
       :registry_dir, :cert_dir, :services_compose_path, :pages_dir,
-      :pages_domain, :pages_tunnel_token_path
+      :pages_domain, :pages_tunnel_token_path, :app_path_replacements,
+      :app_domain_source_suffix, :app_domain_suffix, :extra_path
 
     def initialize(data)
       @id = required(data, "id")
@@ -60,6 +65,10 @@ module Tesseract
       @pages_dir = data.fetch("pages_dir", File.join(File.dirname(@base_repo_path), "pages"))
       @pages_domain = data["pages_domain"]
       @pages_tunnel_token_path = data["pages_tunnel_token_path"]
+      @app_path_replacements = data.fetch("app_path_replacements", {})
+      @app_domain_source_suffix = data.fetch("app_domain_source_suffix", "tars.achan.bot")
+      @app_domain_suffix = data["app_domain_suffix"]
+      @extra_path = Array(data.fetch("extra_path", []))
       @local = data.fetch("local", false)
       @services = data.fetch("services", {})
     end
@@ -78,6 +87,18 @@ module Tesseract
       return @host_name if local? || @host_name.include?("@")
 
       "#{@service_user}@#{@host_name}"
+    end
+
+    def command_path
+      entries = @extra_path + [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin"
+      ]
+      entries.compact.uniq.join(":")
     end
 
     def services_compose
@@ -115,7 +136,37 @@ module Tesseract
       @services.fetch("postgres", {}).fetch("password", "dev")
     end
 
+    def rewrite_app_profile(data)
+      rewrite_value(data)
+    end
+
     private
+
+    def rewrite_value(value)
+      case value
+      when Hash
+        value.transform_values { |nested| rewrite_value(nested) }
+      when Array
+        value.map { |nested| rewrite_value(nested) }
+      when String
+        rewrite_string(value)
+      else
+        value
+      end
+    end
+
+    def rewrite_string(value)
+      rewritten = value.dup
+      @app_path_replacements.each do |source, target|
+        rewritten = rewritten.sub(/\A#{Regexp.escape(source)}(?=\/|\z)/, target)
+      end
+
+      if @app_domain_suffix && !@app_domain_suffix.empty?
+        rewritten = rewritten.gsub(/(?<=^|\.)#{Regexp.escape(@app_domain_source_suffix)}(?=[:\/\z]|\b)/, @app_domain_suffix)
+      end
+
+      rewritten
+    end
 
     def required(data, key)
       data.fetch(key) { raise Config::Error, "host profile is missing #{key}" }
@@ -126,7 +177,7 @@ module Tesseract
     attr_reader :id, :repo, :main_path, :worktree_root, :domain, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
       :setup_commands, :env_overrides, :url_template, :dns_zone,
-      :worktree_driver, :default_branch
+      :worktree_driver, :default_branch, :fetch_on_create
 
     def initialize(data)
       @id = required(data, "id")
@@ -142,6 +193,7 @@ module Tesseract
         raise Config::Error, "#{@id} git worktree profile is missing worktree_root"
       end
       @default_branch = data.fetch("default_branch", "main")
+      @fetch_on_create = data.fetch("fetch_on_create", true)
       @base_port = data.key?("base_port") ? Integer(data.fetch("base_port")) : nil
       @port_count = Integer(data.fetch("port_count", 99))
       @database_enabled = data.fetch("database", true)

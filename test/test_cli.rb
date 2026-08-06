@@ -487,6 +487,54 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_mobile_dashboard_worktree_create_uses_case_paths
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "create", "mobile-dashboard", "cost-calculator", "--host", "case"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "main_path='/Users/bot/repos/mobile-dashboard'"
+    assert_includes script, "worktree_root='/Users/bot/repos/mobile-dashboard-worktrees'"
+    assert_includes script, "branch='feature/cost-calculator'"
+    assert_includes script, 'git -C "$main_path" worktree add'
+    refute_includes script, "./bin/tesseract"
+    assert_empty stderr.string
+  end
+
+  def test_mobile_dashboard_worktree_start_creates_case_tmux_session
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["worktree", "start", "mobile-dashboard", "cost-calculator", "--host", "case"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "path='/Users/bot/repos/mobile-dashboard-worktrees/cost-calculator'"
+    assert_includes script, "session='mobile_dashboard_cost_calculator'"
+    assert_includes script, 'tmux new-session -d -s "$session" -n main -c "$path"'
+    assert_includes script, 'echo "url=-"'
+    refute_includes script, "expo start"
+    assert_empty stderr.string
+  end
+
   def test_signatures_worktree_create_defaults_to_feature_branch
     stdout = StringIO.new
     stderr = StringIO.new

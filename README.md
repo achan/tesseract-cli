@@ -182,6 +182,8 @@ bin/tesseract app setup flexday --host tars
 
 bin/tesseract app clone chrome-extensions --host tars
 
+bin/tesseract app clone mobile-dashboard --host case
+
 bin/tesseract app clone tesseract-web --host tars
 bin/tesseract app setup tesseract-web --host tars
 ```
@@ -295,6 +297,19 @@ worktree; it does not launch a web server or assign a URL:
 bin/tesseract worktree create chrome-extensions manifest-v3 --host tars
 bin/tesseract worktree start chrome-extensions manifest-v3 --host tars
 bin/tesseract worktree status chrome-extensions manifest-v3 --host tars
+```
+
+Mobile Dashboard uses the same Git-only lifecycle on `case`. The existing main
+clone lives at `/Users/bot/repos/mobile-dashboard`, and worktrees are created
+under `/Users/bot/repos/mobile-dashboard-worktrees`. Starting a worktree opens
+a tmux session but does not install dependencies, launch Expo or Metro, or
+assign a URL:
+
+```bash
+bin/tesseract worktree create mobile-dashboard cost-calculator --host case
+bin/tesseract worktree start mobile-dashboard cost-calculator --host case
+bin/tesseract worktree status mobile-dashboard cost-calculator --host case
+bin/tesseract attach mobile_dashboard_cost_calculator --host case
 ```
 
 `stop` kills the app's tmux session and processes but leaves the worktree,

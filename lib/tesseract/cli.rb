@@ -3,6 +3,7 @@ require "tesseract/interactive_runner"
 require "tesseract/local_runner"
 require "tesseract/remote_runner"
 require "tesseract/shell"
+require "stringio"
 
 module Tesseract
   class CLI
@@ -12,8 +13,10 @@ module Tesseract
       @argv = argv.dup
       @stdout = stdout
       @stderr = stderr
+      @root = root
       @config = Config.new(root)
       @host_id = DEFAULT_HOST
+      @host_explicit = false
     end
 
     def run
@@ -66,9 +69,11 @@ module Tesseract
           raise Config::Error, "--host requires a value" unless value
 
           @host_id = value
+          @host_explicit = true
           index += 2
         elsif arg.start_with?("--host=")
           @host_id = arg.split("=", 2).last
+          @host_explicit = true
           index += 1
         else
           parsed << arg
@@ -149,6 +154,36 @@ module Tesseract
     end
 
     def live
+      return live_single if @host_explicit
+
+      @stdout.printf("%-8s %-32s %8s %-48s %s\n", "HOST", "TMUX", "RSS", "URL", "CHANGELOG")
+      failed = false
+      @config.hosts.reject(&:local?).each do |target_host|
+        output = StringIO.new
+        errors = StringIO.new
+        status = self.class.new(
+          ["live", "--host", target_host.id],
+          stdout: output,
+          stderr: errors,
+          root: @root
+        ).run
+        if status.zero?
+          output.string.lines.drop(1).each do |line|
+            next if line.strip == "none"
+
+            @stdout.printf("%-8s %s", target_host.id, line)
+          end
+        else
+          failed = true
+          detail = errors.string.strip
+          detail = "live query failed" if detail.empty?
+          @stderr.puts("warning: #{target_host.id}: #{detail}")
+        end
+      end
+      failed ? 1 : 0
+    end
+
+    def live_single
       apps = @config.apps(host: host).map { |profile| "#{profile.id}\t#{profile.main_path}" }
       changelog_registry = File.join(File.dirname(host.base_repo_path), ".codex", "state", "worktree-changelogs.json")
       changelog_base_url = host.pages_domain ? "https://#{host.pages_domain}" : ""
@@ -165,6 +200,20 @@ module Tesseract
         rss_for_path() {
           target="$1"
           total_kb=0
+          if [ ! -d /proc ] && command -v lsof >/dev/null 2>&1; then
+            for pid in $(lsof -a -d cwd -Fn 2>/dev/null | awk -v target="$target" '
+              /^p/ { pid=substr($0, 2) }
+              /^n/ { cwd=substr($0, 2); if (cwd == target || index(cwd, target "/") == 1) print pid }
+            ' | sort -u); do
+              rss_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+              case "$rss_kb" in
+                ""|*[!0-9]*) rss_kb=0 ;;
+              esac
+              total_kb=$((total_kb + rss_kb))
+            done
+            printf "%s" "$total_kb"
+            return
+          fi
           for cwd_link in /proc/[0-9]*/cwd; do
             [ -e "$cwd_link" ] || continue
             cwd=$(readlink -f "$cwd_link" 2>/dev/null || true)
@@ -1296,13 +1345,15 @@ EOF
           tesseract [--host HOST] app doctor|clone|pull|setup APP
           tesseract [--host HOST] attach SESSION
           tesseract [--host HOST] worktree list [APP]
-          tesseract [--host HOST] worktree create|start|stop|status|remove APP SLUG [BRANCH]
+          tesseract [--host HOST] worktree create APP SLUG [BRANCH]
+          tesseract [--host HOST] worktree start APP SLUG [--api-url URL]
+          tesseract [--host HOST] worktree stop|status|remove APP SLUG [--force]
           tesseract [--host HOST] dns doctor|sync APP
           tesseract [--host HOST] cert doctor|issue|renew APP
           tesseract [--host HOST] pages list [--sort updated|title|url] [--page N] [--per-page N]
           tesseract [--host HOST] pages start|status|stop
 
-        HOST defaults to #{DEFAULT_HOST}.
+        HOST defaults to #{DEFAULT_HOST}, except plain `live`, which aggregates non-local hosts.
       HELP
     end
   end

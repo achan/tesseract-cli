@@ -264,6 +264,8 @@ class CLITest < Minitest::Test
     assert_includes script, "rss_for_path()"
     assert_includes script, "/proc/[0-9]*/cwd"
     assert_includes script, "VmRSS:"
+    assert_includes script, "command -v lsof"
+    assert_includes script, 'ps -o rss= -p "$pid"'
     assert_includes script, "format_rss()"
     assert_includes script, "changelog_for_path()"
     assert_includes script, "/home/bot/.codex/state/worktree-changelogs.json"
@@ -276,6 +278,52 @@ class CLITest < Minitest::Test
     assert_includes script, "session="
     assert_includes script, "url="
     assert_empty stderr.string
+  end
+
+  def test_plain_live_aggregates_non_local_hosts_with_host_column
+    stdout = StringIO.new
+    stderr = StringIO.new
+    outputs = {
+      "case" => "TMUX RSS URL CHANGELOG\nmobile_dashboard_demo 10MiB http://localhost:8081 -\n",
+      "tars" => "TMUX RSS URL CHANGELOG\ndocovia_demo 1GiB https://app.example -\n"
+    }
+    factory = lambda do |target_host, stdout:, stderr:|
+      Object.new.tap do |fake|
+        fake.define_singleton_method(:run) { |_script| stdout.print(outputs.fetch(target_host.id)); 0 }
+      end
+    end
+    cli = Tesseract::CLI.new(["live"], stdout: stdout, stderr: stderr, root: File.expand_path("..", __dir__))
+
+    status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
+
+    assert_equal 0, status
+    assert_includes stdout.string, "HOST"
+    assert_includes stdout.string, "case     mobile_dashboard_demo"
+    assert_includes stdout.string, "tars     docovia_demo"
+    refute_match(/^local\s/, stdout.string)
+    assert_empty stderr.string
+  end
+
+  def test_plain_live_continues_after_host_failure_and_returns_nonzero
+    stdout = StringIO.new
+    stderr = StringIO.new
+    factory = lambda do |target_host, stdout:, stderr:|
+      Object.new.tap do |fake|
+        fake.define_singleton_method(:run) do |_script|
+          raise Tesseract::RemoteRunner::Error, "unreachable" if target_host.id == "case"
+
+          stdout.print("TMUX RSS URL CHANGELOG\ndocovia_demo 1GiB https://app.example -\n")
+          0
+        end
+      end
+    end
+    cli = Tesseract::CLI.new(["live"], stdout: stdout, stderr: stderr, root: File.expand_path("..", __dir__))
+
+    status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
+
+    assert_equal 1, status
+    assert_includes stdout.string, "tars     docovia_demo"
+    assert_includes stderr.string, "warning: case"
   end
 
   def test_global_host_can_follow_command
@@ -503,20 +551,17 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "main_path='/Users/bot/repos/mobile-dashboard'"
-    assert_includes script, "worktree_root='/Users/bot/repos/mobile-dashboard-worktrees'"
-    assert_includes script, "branch='feature/cost-calculator'"
-    assert_includes script, 'git -C "$main_path" worktree add'
-    refute_includes script, "./bin/tesseract"
+    assert_includes script, "cd '/Users/bot/repos/mobile-dashboard'"
+    assert_includes script, "exec ./bin/tesseract 'worktree' 'create' 'cost-calculator'"
     assert_empty stderr.string
   end
 
-  def test_mobile_dashboard_worktree_start_creates_case_tmux_session
+  def test_mobile_dashboard_worktree_start_dispatches_api_url_to_repository_adapter
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
     cli = Tesseract::CLI.new(
-      ["worktree", "start", "mobile-dashboard", "cost-calculator", "--host", "case"],
+      ["worktree", "start", "mobile-dashboard", "cost-calculator", "--api-url", "https://api.docovia.tars.achan.bot:3113", "--host", "case"],
       stdout: stdout,
       stderr: stderr,
       root: File.expand_path("..", __dir__)
@@ -527,11 +572,8 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "path='/Users/bot/repos/mobile-dashboard-worktrees/cost-calculator'"
-    assert_includes script, "session='mobile_dashboard_cost_calculator'"
-    assert_includes script, 'tmux new-session -d -s "$session" -n main -c "$path"'
-    assert_includes script, 'echo "url=-"'
-    refute_includes script, "expo start"
+    assert_includes script, "cd '/Users/bot/repos/mobile-dashboard'"
+    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'cost-calculator' '--api-url' 'https://api.docovia.tars.achan.bot:3113'"
     assert_empty stderr.string
   end
 

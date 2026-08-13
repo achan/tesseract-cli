@@ -2,7 +2,7 @@ id: mobile-dashboard
 repo: git@github.com:getsprung/mobile-dashboard.git
 main_path: /home/bot/repos/mobile-dashboard
 worktree_root: /home/bot/repos/mobile-dashboard-worktrees
-worktree_driver: git
+worktree_driver: repository
 default_branch: main
 domain: mobile-dashboard.tars.achan.bot
 database: false

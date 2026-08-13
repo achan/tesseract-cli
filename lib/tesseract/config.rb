@@ -36,6 +36,12 @@ module Tesseract
       end
     end
 
+    def hosts
+      Dir.glob(File.join(@root, "config", "hosts", "*.yml")).sort.map do |path|
+        HostProfile.new(load_yaml(path))
+      end
+    end
+
     private
 
     def load_yaml(path)

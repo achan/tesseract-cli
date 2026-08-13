@@ -28,7 +28,9 @@ servers, workers, and asset processes.
 
 ## Command Shape
 
-All commands accept `--host`. If omitted, `--host tars` is used.
+All commands accept `--host`. If omitted, `--host tars` is used, except plain
+`live` and `pages list`, which aggregate results from all configured remote
+hosts.
 
 ```bash
 bin/tesseract doctor
@@ -61,10 +63,11 @@ bin/tesseract pages status --host tars
 bin/tesseract pages stop --host tars
 ```
 
-`pages list` reads `~/.obfuscated_pages.json` as the selected host's runtime
-user (`bot` on `tars`) and prints registered pages newest first with their
-updated date, title, and URL. Results are paginated with 10 rows per page by
-default. Select a page with `--page N` and change its size with `--per-page N`.
+Plain `pages list` reads `~/.obfuscated_pages.json` on every configured remote
+host and adds a host column to the combined output. Pass `--host` to list only
+the selected host. It prints registered pages newest first with their updated
+date, title, and URL. Results are paginated independently per host with 10 rows
+per page by default. Select a page with `--page N` and change its size with `--per-page N`.
 Dates use `YY/MM/DD`. Output uses 100-character columns; long titles are
 truncated, while URLs remain complete and may extend past that width. Sort with
 `--sort updated|title|url`; updated is the default and sorts newest first, while

@@ -128,17 +128,17 @@ class ConfigTest < Minitest::Test
     assert_empty app.dns_records
   end
 
-  def test_loads_mobile_dashboard_git_worktree_profile
+  def test_loads_mobile_dashboard_repository_worktree_profile
     app = @config.app("mobile-dashboard")
 
     assert_equal "mobile-dashboard", app.id
     assert_equal "git@github.com:getsprung/mobile-dashboard.git", app.repo
     assert_equal "/home/bot/repos/mobile-dashboard", app.main_path
     assert_equal "/home/bot/repos/mobile-dashboard-worktrees", app.worktree_root
-    assert_equal "git", app.worktree_driver
+    assert_equal "repository", app.worktree_driver
     assert_equal "main", app.default_branch
     assert app.fetch_on_create
-    assert app.git_worktrees?
+    refute app.git_worktrees?
     refute app.database_enabled?
     assert_empty app.dns_records
   end
@@ -199,6 +199,10 @@ class ConfigTest < Minitest::Test
     assert_includes @config.apps.map(&:id), "mobile-dashboard"
     assert_includes @config.apps.map(&:id), "signatures"
     assert_includes @config.apps.map(&:id), "tesseract-web"
+  end
+
+  def test_lists_configured_hosts
+    assert_equal ["case", "local", "tars"], @config.hosts.map(&:id)
   end
 
   def test_git_worktree_profile_requires_worktree_root

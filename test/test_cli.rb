@@ -84,12 +84,65 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_plain_pages_list_aggregates_non_local_hosts_with_host_column
+    stdout = StringIO.new
+    stderr = StringIO.new
+    outputs = {
+      "case" => "UPDATED   TITLE                                                     URL\n26/08/12  Mobile page                                               https://mobile.example\nPage 1/1 (1 total)\n",
+      "tars" => "UPDATED   TITLE                                                     URL\n26/08/13  Tars page                                                 https://tars.example\nPage 1/1 (1 total)\n"
+    }
+    factory = lambda do |target_host, stdout:, stderr:|
+      Object.new.tap do |fake|
+        fake.define_singleton_method(:run) { |_script| stdout.print(outputs.fetch(target_host.id)); 0 }
+      end
+    end
+    cli = Tesseract::CLI.new(
+      ["pages", "list", "--sort", "title", "--per-page", "5"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+
+    status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
+
+    assert_equal 0, status
+    assert_includes stdout.string, "HOST"
+    assert_includes stdout.string, "case     26/08/12"
+    assert_includes stdout.string, "tars     26/08/13"
+    assert_includes stdout.string, "case     Page 1/1 (1 total)"
+    assert_includes stdout.string, "tars     Page 1/1 (1 total)"
+    refute_match(/^local\s/, stdout.string)
+    assert_empty stderr.string
+  end
+
+  def test_plain_pages_list_continues_after_host_failure_and_returns_nonzero
+    stdout = StringIO.new
+    stderr = StringIO.new
+    factory = lambda do |target_host, stdout:, stderr:|
+      Object.new.tap do |fake|
+        fake.define_singleton_method(:run) do |_script|
+          raise Tesseract::RemoteRunner::Error, "unreachable" if target_host.id == "case"
+
+          stdout.print("UPDATED TITLE URL\n26/08/13 Tars page https://tars.example\nPage 1/1 (1 total)\n")
+          0
+        end
+      end
+    end
+    cli = Tesseract::CLI.new(["pages", "list"], stdout: stdout, stderr: stderr, root: File.expand_path("..", __dir__))
+
+    status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
+
+    assert_equal 1, status
+    assert_includes stdout.string, "tars     26/08/13"
+    assert_includes stderr.string, "warning: case"
+  end
+
   def test_pages_list_sorts_by_title
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
     cli = Tesseract::CLI.new(
-      ["pages", "list", "--sort", "title"],
+      ["pages", "list", "--sort", "title", "--host", "tars"],
       stdout: stdout,
       stderr: stderr,
       root: File.expand_path("..", __dir__)
@@ -110,7 +163,7 @@ class CLITest < Minitest::Test
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
     cli = Tesseract::CLI.new(
-      ["pages", "list", "--page", "2", "--per-page=5"],
+      ["pages", "list", "--page", "2", "--per-page=5", "--host", "tars"],
       stdout: stdout,
       stderr: stderr,
       root: File.expand_path("..", __dir__)
@@ -957,7 +1010,7 @@ class CLITest < Minitest::Test
   def pages_list_script(*arguments)
     runner = ScriptCaptureRunner.new
     cli = Tesseract::CLI.new(
-      ["pages", "list", *arguments],
+      ["pages", "list", *arguments, "--host", "tars"],
       stdout: StringIO.new,
       stderr: StringIO.new,
       root: File.expand_path("..", __dir__)

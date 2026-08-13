@@ -886,6 +886,7 @@ EOF
         return usage("invalid pages sort column: #{sort}") unless %w[updated title url].include?(sort)
         return usage("invalid pages page: #{page}") unless page.match?(/\A[1-9]\d*\z/)
         return usage("invalid pages per-page: #{per_page}") unless per_page.match?(/\A[1-9]\d*\z/)
+        return pages_list_all_hosts(sort, page, per_page) unless @host_explicit
 
         runner.run("set -- #{Shell.escape(sort)} #{Shell.escape(page)} #{Shell.escape(per_page)}\n" + <<~'SH')
           set -eu
@@ -1041,6 +1042,34 @@ EOF
       else
         usage("unknown pages action: #{action}")
       end
+    end
+
+    def pages_list_all_hosts(sort, page, per_page)
+      @stdout.printf("%-8s %-8s  %-56s  %s\n", "HOST", "UPDATED", "TITLE", "URL")
+      failed = false
+      @config.hosts.reject(&:local?).each do |target_host|
+        output = StringIO.new
+        errors = StringIO.new
+        status = self.class.new(
+          ["pages", "list", "--sort", sort, "--page", page, "--per-page", per_page, "--host", target_host.id],
+          stdout: output,
+          stderr: errors,
+          root: @root
+        ).run
+        if status.zero?
+          output.string.lines.drop(1).each do |line|
+            next if line.strip == "none"
+
+            @stdout.printf("%-8s %s", target_host.id, line)
+          end
+        else
+          failed = true
+          detail = errors.string.strip
+          detail = "pages list query failed" if detail.empty?
+          @stderr.puts("warning: #{target_host.id}: #{detail}")
+        end
+      end
+      failed ? 1 : 0
     end
 
     def pages_start_proxy_script(custom_domain, tunnel_token_path, tunnel_session, pages_port)
@@ -1353,7 +1382,7 @@ EOF
           tesseract [--host HOST] pages list [--sort updated|title|url] [--page N] [--per-page N]
           tesseract [--host HOST] pages start|status|stop
 
-        HOST defaults to #{DEFAULT_HOST}, except plain `live`, which aggregates non-local hosts.
+        HOST defaults to #{DEFAULT_HOST}, except plain `live` and `pages list`, which aggregate non-local hosts.
       HELP
     end
   end

@@ -112,7 +112,7 @@ class ConfigTest < Minitest::Test
     assert app.git_worktrees?
     assert app.git_server?
     assert_equal 6200, app.base_port
-    assert_equal "bin/dev", app.web_command
+    assert_equal "mise exec -- bin/dev", app.web_command
     assert_equal({ "BINDING" => "0.0.0.0" }, app.env_overrides)
     assert_equal "http://{domain}:{port}", app.url_template
     assert_equal ["signatures.achan.bot"], app.dns_records

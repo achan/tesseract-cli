@@ -689,7 +689,7 @@ class CLITest < Minitest::Test
     assert_includes script, "candidate=6200"
     assert_includes script,
       'tmux new-session -d -s "$session" -n main -c "$path" "export PORT=$port; export BINDING=' +
-        "'0.0.0.0'; exec bin/dev\""
+        "'0.0.0.0'; exec mise exec -- bin/dev\""
     assert_includes script, 'tmux has-session -t "=$session"'
     assert_includes script, 'echo "url=$url"'
     assert_empty stderr.string

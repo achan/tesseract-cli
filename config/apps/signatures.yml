@@ -9,7 +9,7 @@ base_port: 6200
 port_count: 99
 url_template: http://{domain}:{port}
 processes:
-  web: bin/dev
+  web: mise exec -- bin/dev
 env_overrides:
   BINDING: 0.0.0.0
 database: false

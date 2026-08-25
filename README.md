@@ -423,8 +423,12 @@ When no branch is supplied, `create` uses `feature/<slug>`. Existing local or
 remote branches are reused; otherwise the branch is created from
 `default_branch`. The `start` action opens a tmux session rooted in the
 worktree using the conventional `<app>_<slug>` name, with hyphens converted
-to underscores; `stop` kills that session. Git-only profiles do not launch an
-app server, assign a URL, or run app-specific setup.
+to underscores; `stop` kills that session. By default, Git-only profiles do not
+launch an app server, assign a URL, or run app-specific setup. They can opt into
+an app server by defining `base_port`, `url_template`, and `processes.web`.
+Tesseract then assigns each worktree a stable port, exports it as `PORT`,
+launches the web command in tmux, reports the expanded URL from `status`, and
+releases the assignment on removal.
 
 ## Resetting Runtime State
 

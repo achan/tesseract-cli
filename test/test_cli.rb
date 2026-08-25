@@ -668,7 +668,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_start_creates_conventional_tmux_session
+  def test_signatures_worktree_start_launches_server_with_allocated_port
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -686,8 +686,12 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes script, "path='/home/bot/repos/signatures-worktrees/portal'"
     assert_includes script, "session='signatures_portal'"
-    assert_includes script, 'tmux new-session -d -s "$session" -n main -c "$path"'
+    assert_includes script, "candidate=6200"
+    assert_includes script,
+      'tmux new-session -d -s "$session" -n main -c "$path" "export PORT=$port; export BINDING=' +
+        "'0.0.0.0'; exec bin/dev\""
     assert_includes script, 'tmux has-session -t "=$session"'
+    assert_includes script, 'echo "url=$url"'
     assert_empty stderr.string
   end
 

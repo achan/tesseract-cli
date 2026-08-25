@@ -99,29 +99,19 @@ class ConfigTest < Minitest::Test
     assert_equal ["flexday.tars.achan.bot"], app.dns_records
   end
 
-  def test_loads_signatures_git_worktree_profile
+  def test_loads_signatures_repository_worktree_profile
     app = @config.app("signatures")
 
     assert_equal "signatures", app.id
     assert_equal "git@github.com:achan/signatures.git", app.repo
     assert_equal "/home/bot/repos/signatures", app.main_path
-    assert_equal "/home/bot/repos/signatures-worktrees", app.worktree_root
-    assert_equal "git", app.worktree_driver
+    assert_nil app.worktree_root
+    assert_equal "repository", app.worktree_driver
     assert_equal "main", app.default_branch
     assert app.fetch_on_create
-    assert app.git_worktrees?
-    assert app.git_server?
-    assert_equal 6200, app.base_port
-    assert_equal "mise exec -- bin/dev", app.web_command
-    assert_equal(
-      {
-        "BINDING" => "0.0.0.0",
-        "SSL_CERT_PATH" => "/home/bot/.local/share/tesseract/certs/signatures.achan.bot.crt",
-        "SSL_KEY_PATH" => "/home/bot/.local/share/tesseract/certs/signatures.achan.bot.key",
-      },
-      app.env_overrides,
-    )
-    assert_equal "https://{domain}:{port}", app.url_template
+    refute app.git_worktrees?
+    refute app.git_server?
+    assert_nil app.base_port
     assert_equal ["signatures.achan.bot"], app.dns_records
     refute app.database_enabled?
   end

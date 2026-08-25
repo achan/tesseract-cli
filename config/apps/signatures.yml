@@ -1,19 +1,7 @@
 id: signatures
 repo: git@github.com:achan/signatures.git
 main_path: /home/bot/repos/signatures
-worktree_root: /home/bot/repos/signatures-worktrees
-worktree_driver: git
-default_branch: main
 domain: signatures.achan.bot
-base_port: 6200
-port_count: 99
-url_template: https://{domain}:{port}
-processes:
-  web: mise exec -- bin/dev
-env_overrides:
-  BINDING: 0.0.0.0
-  SSL_CERT_PATH: /home/bot/.local/share/tesseract/certs/signatures.achan.bot.crt
-  SSL_KEY_PATH: /home/bot/.local/share/tesseract/certs/signatures.achan.bot.key
 database: false
 dns_records:
   - "{domain}"

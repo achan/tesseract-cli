@@ -515,7 +515,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_create_uses_git_only_driver
+  def test_signatures_worktree_create_delegates_to_repository_adapter
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -531,12 +531,9 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "main_path='/home/bot/repos/signatures'"
-    assert_includes script, "worktree_root='/home/bot/repos/signatures-worktrees'"
-    assert_includes script, "branch='feature/portal'"
-    assert_includes script, 'git -C "$main_path" worktree add'
-    assert_includes script, 'worktree add --no-track -b "$branch"'
-    refute_includes script, "./bin/tesseract"
+    assert_includes script, "cd '/home/bot/repos/signatures'"
+    assert_includes script,
+      "exec ./bin/tesseract 'worktree' 'create' 'portal' 'feature/portal'"
     assert_empty stderr.string
   end
 
@@ -645,7 +642,8 @@ class CLITest < Minitest::Test
     status = cli.run
 
     assert_equal 0, status
-    assert_includes runner.scripts.fetch(0), "branch='feature/portal'"
+    assert_includes runner.scripts.fetch(0),
+      "exec ./bin/tesseract 'worktree' 'create' 'portal'"
     assert_empty stderr.string
   end
 
@@ -664,11 +662,12 @@ class CLITest < Minitest::Test
     status = cli.run
 
     assert_equal 0, status
-    assert_includes runner.scripts.fetch(0), "branch='feature/portal'"
+    assert_includes runner.scripts.fetch(0),
+      "exec ./bin/tesseract 'worktree' 'create' 'portal' 'origin/feature/portal'"
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_start_launches_server_with_allocated_port
+  def test_signatures_worktree_start_delegates_to_repository_adapter
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -684,20 +683,12 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "path='/home/bot/repos/signatures-worktrees/portal'"
-    assert_includes script, "session='signatures_portal'"
-    assert_includes script, "candidate=6200"
-    assert_includes script,
-      'tmux new-session -d -s "$session" -n main -c "$path" "export PORT=$port; export BINDING=' +
-        "'0.0.0.0'; export SSL_CERT_PATH='/home/bot/.local/share/tesseract/certs/" +
-        "signatures.achan.bot.crt'; export SSL_KEY_PATH='/home/bot/.local/share/tesseract/certs/" +
-        "signatures.achan.bot.key'; exec mise exec -- bin/dev\""
-    assert_includes script, 'tmux has-session -t "=$session"'
-    assert_includes script, 'echo "url=$url"'
+    assert_includes script, "cd '/home/bot/repos/signatures'"
+    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'portal'"
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_stop_kills_conventional_tmux_session
+  def test_signatures_worktree_stop_delegates_to_repository_adapter
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -713,12 +704,13 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "session='signatures_portal_refresh'"
-    assert_includes script, 'tmux kill-session -t "=$session"'
+    assert_includes script, "cd '/home/bot/repos/signatures'"
+    assert_includes script,
+      "exec ./bin/tesseract 'worktree' 'stop' 'portal-refresh'"
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_remove_preserves_git_safety_by_default
+  def test_signatures_worktree_remove_delegates_to_repository_adapter
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -734,10 +726,8 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, 'git -C "$main_path" worktree remove  "$path"'
-    assert_includes script, "session='signatures_portal'"
-    assert_includes script, 'tmux kill-session -t "=$session"'
-    refute_includes script, "worktree remove --force"
+    assert_includes script, "cd '/home/bot/repos/signatures'"
+    assert_includes script, "exec ./bin/tesseract 'worktree' 'remove' 'portal'"
     assert_empty stderr.string
   end
 

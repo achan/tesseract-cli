@@ -4,6 +4,14 @@ main_path: /home/bot/repos/signatures
 worktree_root: /home/bot/repos/signatures-worktrees
 worktree_driver: git
 default_branch: main
-domain: signatures.tars.achan.bot
+domain: signatures.achan.bot
+base_port: 6200
+port_count: 99
+url_template: http://{domain}:{port}
+processes:
+  web: bin/dev
+env_overrides:
+  BINDING: 0.0.0.0
 database: false
-dns_records: []
+dns_records:
+  - "{domain}"

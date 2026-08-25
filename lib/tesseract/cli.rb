@@ -685,10 +685,13 @@ EOF
     end
 
     def git_worktree_status(profile, slug)
+      runtime = git_worktree_runtime(profile, slug)
+      url_output = profile.git_server? ? 'echo "url=$url"' : 'echo "url=-"'
       runner.run(<<~SH)
         set -u
         path=#{Shell.escape(File.join(profile.worktree_root, slug))}
         session=#{Shell.escape(git_worktree_session(profile, slug))}
+        #{runtime}
         echo "app=#{profile.id}"
         echo "slug=#{slug}"
         echo "path=$path"
@@ -704,11 +707,22 @@ EOF
           echo "running=no"
         fi
         echo "tmux_session=$session"
-        echo "url=-"
+        #{url_output}
       SH
     end
 
     def git_worktree_start(profile, slug)
+      runtime = git_worktree_runtime(profile, slug, allocate: true)
+      status_runtime = git_worktree_runtime(profile, slug)
+      launch = if profile.git_server?
+        exports = profile.env_overrides.map do |key, value|
+          "export #{key}=#{Shell.single_quoted(value.to_s)};"
+        end.join(" ")
+        %(tmux new-session -d -s "$session" -n main -c "$path" "export PORT=$port; #{exports} exec #{profile.web_command}")
+      else
+        %(tmux new-session -d -s "$session" -n main -c "$path")
+      end
+      url_output = profile.git_server? ? 'echo "url=$url"' : 'echo "url=-"'
       runner.run(<<~SH)
         set -eu
         path=#{Shell.escape(File.join(profile.worktree_root, slug))}
@@ -720,12 +734,14 @@ EOF
         if tmux has-session -t "=$session" 2>/dev/null; then
           echo "session already running: $session"
         else
-          tmux new-session -d -s "$session" -n main -c "$path"
+          #{runtime}
+          #{launch}
           echo "started $session"
         fi
+        #{status_runtime}
         echo "path=$path"
         echo "tmux_session=$session"
-        echo "url=-"
+        #{url_output}
       SH
     end
 
@@ -759,7 +775,62 @@ EOF
         fi
         git -C "$main_path" worktree remove #{force_arg} "$path"
         git -C "$main_path" worktree prune
+        #{git_worktree_release_port(profile, slug)}
         echo "removed #{profile.id}/#{slug} path=$path"
+      SH
+    end
+
+    def git_worktree_runtime(profile, slug, allocate: false)
+      return "url=-" unless profile.git_server?
+
+      allocation = if allocate
+        <<~SH.chomp
+          if [ -z "$port" ]; then
+            candidate=#{profile.base_port}
+            maximum=#{profile.base_port + profile.port_count - 1}
+            while [ "$candidate" -le "$maximum" ]; do
+              if ! awk -F '\t' -v candidate="$candidate" '$2 == candidate { found=1 } END { exit !found }' "$registry"; then
+                port="$candidate"
+                printf "%s\t%s\n" #{Shell.escape(slug)} "$port" >> "$registry"
+                break
+              fi
+              candidate=$((candidate + 1))
+            done
+            if [ -z "$port" ]; then
+              echo "no available ports for #{profile.id}" >&2
+              exit 1
+            fi
+          fi
+        SH
+      else
+        ""
+      end
+
+      <<~SH.chomp
+        registry=#{Shell.escape(registry_path(profile))}
+        mkdir -p "$(dirname "$registry")"
+        touch "$registry"
+        port=$(awk -F '\t' -v slug=#{Shell.escape(slug)} '$1 == slug { print $2; exit }' "$registry")
+        #{allocation}
+        if [ -n "$port" ]; then
+          url=#{Shell.escape(profile.url_template)}
+          url=$(printf "%s" "$url" | sed "s/{domain}/#{profile.domain}/g; s/{port}/$port/g")
+        else
+          url="-"
+        fi
+      SH
+    end
+
+    def git_worktree_release_port(profile, slug)
+      return ":" unless profile.git_server?
+
+      <<~SH.chomp
+        registry=#{Shell.escape(registry_path(profile))}
+        if [ -f "$registry" ]; then
+          temporary="$registry.tmp.$$"
+          awk -F '\t' -v slug=#{Shell.escape(slug)} '$1 != slug' "$registry" > "$temporary"
+          mv "$temporary" "$registry"
+        fi
       SH
     end
 

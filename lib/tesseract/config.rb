@@ -223,6 +223,10 @@ module Tesseract
       worktree_driver == "git"
     end
 
+    def git_server?
+      git_worktrees? && base_port && @processes["web"].to_s != ""
+    end
+
     def dns_records
       @dns_records.map { |record| record.gsub("{domain}", domain) }
     end

@@ -110,8 +110,13 @@ class ConfigTest < Minitest::Test
     assert_equal "main", app.default_branch
     assert app.fetch_on_create
     assert app.git_worktrees?
+    assert app.git_server?
+    assert_equal 6200, app.base_port
+    assert_equal "bin/dev", app.web_command
+    assert_equal({ "BINDING" => "0.0.0.0" }, app.env_overrides)
+    assert_equal "http://{domain}:{port}", app.url_template
+    assert_equal ["signatures.achan.bot"], app.dns_records
     refute app.database_enabled?
-    assert_empty app.dns_records
   end
 
   def test_loads_chrome_extensions_git_worktree_profile

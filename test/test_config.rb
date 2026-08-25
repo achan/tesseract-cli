@@ -113,8 +113,15 @@ class ConfigTest < Minitest::Test
     assert app.git_server?
     assert_equal 6200, app.base_port
     assert_equal "mise exec -- bin/dev", app.web_command
-    assert_equal({ "BINDING" => "0.0.0.0" }, app.env_overrides)
-    assert_equal "http://{domain}:{port}", app.url_template
+    assert_equal(
+      {
+        "BINDING" => "0.0.0.0",
+        "SSL_CERT_PATH" => "/home/bot/.local/share/tesseract/certs/signatures.achan.bot.crt",
+        "SSL_KEY_PATH" => "/home/bot/.local/share/tesseract/certs/signatures.achan.bot.key",
+      },
+      app.env_overrides,
+    )
+    assert_equal "https://{domain}:{port}", app.url_template
     assert_equal ["signatures.achan.bot"], app.dns_records
     refute app.database_enabled?
   end

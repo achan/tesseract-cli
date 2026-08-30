@@ -9,6 +9,8 @@ services_compose_path: /home/achan/.config/tesseract/services/compose.yml
 pages_dir: /home/bot/pages
 pages_domain: pages-tars.achan.bot
 pages_tunnel_token_path: /home/bot/.config/tesseract/pages-tunnel.token
+extra_path:
+  - /home/bot/.local/bin
 services:
   postgres:
     image: pgvector/pgvector:pg14

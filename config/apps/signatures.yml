@@ -2,6 +2,7 @@ id: signatures
 repo: git@github.com:achan/signatures.git
 main_path: /home/bot/repos/signatures
 domain: signatures.achan.bot
+session_driver: herdr
 database: false
 dns_records:
   - "{domain}"

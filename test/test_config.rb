@@ -78,6 +78,7 @@ class ConfigTest < Minitest::Test
     app = @config.app("docovia")
 
     assert_equal "docovia", app.id
+    assert_equal "doc", app.shorthand
     assert_equal "git@github.com:getsprung/app", app.repo
     assert_equal "docovia.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/sprung-app", app.main_path
@@ -90,6 +91,7 @@ class ConfigTest < Minitest::Test
     app = @config.app("flexday")
 
     assert_equal "flexday", app.id
+    assert_equal "f", app.shorthand
     assert_equal "git@github.com:FlexdayInc/flexday", app.repo
     assert_equal "flexday.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/flexday", app.main_path
@@ -104,6 +106,7 @@ class ConfigTest < Minitest::Test
     app = @config.app("signatures")
 
     assert_equal "signatures", app.id
+    assert_equal "sig", app.shorthand
     assert_equal "git@github.com:achan/signatures.git", app.repo
     assert_equal "/home/bot/repos/signatures", app.main_path
     assert_equal "/home/bot/repos/signatures-worktrees", app.worktree_root
@@ -127,6 +130,7 @@ class ConfigTest < Minitest::Test
     app = @config.app("chrome-extensions")
 
     assert_equal "chrome-extensions", app.id
+    assert_equal "cex", app.shorthand
     assert_equal "git@github.com:getsprung/chrome-extensions.git", app.repo
     assert_equal "/home/bot/repos/chrome-extensions", app.main_path
     assert_equal "/home/bot/repos/chrome-extensions-worktrees", app.worktree_root
@@ -141,6 +145,7 @@ class ConfigTest < Minitest::Test
     app = @config.app("mobile-dashboard")
 
     assert_equal "mobile-dashboard", app.id
+    assert_equal "md", app.shorthand
     assert_equal "git@github.com:getsprung/mobile-dashboard.git", app.repo
     assert_equal "/home/bot/repos/mobile-dashboard", app.main_path
     assert_equal "/home/bot/repos/mobile-dashboard-worktrees", app.worktree_root
@@ -159,6 +164,24 @@ class ConfigTest < Minitest::Test
     assert_equal "/Users/bot/repos/mobile-dashboard", app.main_path
     assert_equal "/Users/bot/repos/mobile-dashboard-worktrees", app.worktree_root
     assert_equal "mobile-dashboard.case.achan.bot", app.domain
+  end
+
+  def test_defines_worktree_display_shorthands_for_current_and_future_apps
+    assert_equal(
+      {
+        "signatures" => "sig",
+        "docovia" => "doc",
+        "smilesnap" => "ss",
+        "flexday" => "f",
+        "chrome-extensions" => "cex",
+        "tesseract-web" => "tess",
+        "mobile-dashboard" => "md"
+      },
+      %w[
+        signatures docovia smilesnap flexday chrome-extensions
+        tesseract-web mobile-dashboard
+      ].to_h { |id| [id, @config.app_shorthand(id)] }
+    )
   end
 
   def test_loads_eso_git_worktree_profile

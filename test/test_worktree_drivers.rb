@@ -45,7 +45,18 @@ class WorktreeDriversTest < Minitest::Test
       assert_includes stdout, "runtime=herdr"
       assert_includes stdout, "session=default"
       assert_includes stdout, "workspace_id=w7"
-      assert_includes stdout, "target=default:signatures/demo"
+      assert_includes stdout, "target=default:sig/demo"
+    end
+  end
+
+  def test_signatures_status_finds_legacy_full_app_workspace_label
+    with_runtime_fixture(workspace: true, legacy_workspace: true) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "status", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "runtime=herdr"
+      assert_includes stdout, "workspace_id=w7"
+      assert_includes stdout, "target=default:sig/demo"
     end
   end
 
@@ -60,20 +71,32 @@ class WorktreeDriversTest < Minitest::Test
     end
   end
 
-  def test_signatures_start_creates_two_pane_herdr_workspace
+  def test_signatures_start_creates_code_and_servers_tabs
     with_runtime_fixture do |fixture|
       stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
 
       assert status.success?, stderr
-      assert_includes stdout, "started signatures/demo"
+      assert_includes stdout, "started sig/demo"
       assert_includes stdout, "runtime=herdr"
       assert_includes stdout, "workspace_id=w7"
       log = File.read(fixture.fetch(:herdr_log))
-      assert_includes log, "workspace create --cwd #{fixture.fetch(:worktree)} --label signatures/demo"
+      assert_includes log,
+        "workspace create --cwd #{fixture.fetch(:worktree)} --label sig/demo"
+      assert_includes log, "tab rename w7:t1 Code"
       assert_includes log, "pane split --pane w7:p1 --direction right --ratio 0.5"
-      assert_includes log, "pane run w7:p1 PORT=6204"
+      assert_includes log, "pane rename w7:p1 Codex"
+      assert_includes log, "pane rename w7:p2 Terminal"
+      assert_includes log,
+        "tab create --workspace w7 --cwd #{fixture.fetch(:worktree)} --label Servers"
+      assert_includes log, "pane run w7:p1 TESSERACT_LIVE_ACTIVITY_APP=signatures codex --yolo"
+      assert_includes log, "pane run w7:p3 PORT=6204"
       assert_includes log, "bin/dev"
-      assert_includes log, "pane run w7:p2 TESSERACT_LIVE_ACTIVITY_APP=signatures codex --yolo"
+      assert_includes log,
+        "pane report-metadata w7:p1 --source tesseract --display-agent codex --token url=https://signatures.example.test:6204"
+      assert_includes log,
+        "pane report-metadata w7:p2 --source tesseract --token url=https://signatures.example.test:6204"
+      assert_includes log,
+        "pane report-metadata w7:p3 --source tesseract --token url=https://signatures.example.test:6204"
     end
   end
 
@@ -83,6 +106,35 @@ class WorktreeDriversTest < Minitest::Test
 
       refute status.success?
       assert_includes File.read(fixture.fetch(:herdr_log)), "workspace close w7"
+    end
+  end
+
+  def test_signatures_start_refreshes_url_metadata_for_existing_workspace
+    with_runtime_fixture(workspace: true) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "workspace already running: sig/demo"
+      log = File.read(fixture.fetch(:herdr_log))
+      refute_includes log, "workspace rename"
+      assert_includes log,
+        "pane report-metadata w7:p1 --source tesseract --token url=https://signatures.example.test:6204"
+      assert_includes log,
+        "pane report-metadata w7:p2 --source tesseract --token url=https://signatures.example.test:6204"
+      assert_includes log,
+        "pane report-metadata w7:p1 --source tesseract --display-agent codex"
+      refute_includes log, "workspace create"
+    end
+  end
+
+  def test_signatures_start_normalizes_an_existing_multiline_workspace_label
+    with_runtime_fixture(workspace: true, multiline_workspace: true) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "workspace already running: sig/demo"
+      assert_includes File.read(fixture.fetch(:herdr_log)),
+        "workspace rename w7 sig/demo"
     end
   end
 
@@ -101,7 +153,7 @@ class WorktreeDriversTest < Minitest::Test
       stdout, stderr, status = run_driver(fixture, "worktree", "stop", "demo")
 
       assert status.success?, stderr
-      assert_includes stdout, "stopped signatures/demo"
+      assert_includes stdout, "stopped sig/demo"
       assert_includes stdout, "stopped legacy tmux session signatures_demo"
       assert_includes File.read(fixture.fetch(:herdr_log)), "workspace close w7"
       assert_includes File.read(fixture.fetch(:tmux_log)), "kill-session -t =signatures_demo"
@@ -154,7 +206,13 @@ class WorktreeDriversTest < Minitest::Test
 
   private
 
-  def with_runtime_fixture(workspace: false, tmux_running: false, fail_split: false)
+  def with_runtime_fixture(
+    workspace: false,
+    legacy_workspace: false,
+    multiline_workspace: false,
+    tmux_running: false,
+    fail_split: false
+  )
     Dir.mktmpdir do |directory|
       main = File.join(directory, "main")
       worktree_root = File.join(directory, "worktrees")
@@ -184,7 +242,11 @@ class WorktreeDriversTest < Minitest::Test
         "TMUX_LOG" => tmux_log,
         "TMUX_RUNNING" => tmux_running ? "0" : "1",
         "HERDR_FAIL_SPLIT" => fail_split ? "1" : "0",
-        "HERDR_WORKSPACES_JSON" => workspace_list_json(workspace),
+        "HERDR_WORKSPACES_JSON" => workspace_list_json(
+          workspace,
+          legacy: legacy_workspace,
+          multiline: multiline_workspace
+        ),
         "HERDR_PANES_JSON" => panes_json(worktree)
       )
       yield(
@@ -204,6 +266,7 @@ class WorktreeDriversTest < Minitest::Test
     {
       "PATH" => "#{fake_bin}:#{ENV.fetch("PATH")}",
       "TESSERACT_APP_ID" => "signatures",
+      "TESSERACT_APP_SHORTHAND" => "sig",
       "TESSERACT_MAIN_PATH" => main,
       "TESSERACT_WORKTREE_ROOT" => worktree_root,
       "TESSERACT_DOMAIN" => "signatures.example.test",
@@ -217,6 +280,7 @@ class WorktreeDriversTest < Minitest::Test
       "TESSERACT_PGPASSWORD" => "dev",
       "TESSERACT_WEB_COMMAND" => "bin/dev",
       "TESSERACT_AGENT_COMMAND" => "codex --yolo",
+      "TESSERACT_AGENT_NAME" => "codex",
       "TESSERACT_HERDR_SESSION" => "default",
       "CREATEDB_LOG" => File.join(directory, "createdb.log"),
       "RAILS_LOG" => File.join(directory, "rails.log")
@@ -244,14 +308,19 @@ class WorktreeDriversTest < Minitest::Test
         printf '%s\n' "$*" >> "$HERDR_LOG"
         case "$1 $2" in
           "workspace list") printf '%s\n' "$HERDR_WORKSPACES_JSON" ;;
-          "workspace create") printf '%s\n' '{"result":{"workspace":{"workspace_id":"w7"},"root_pane":{"pane_id":"w7:p1"}}}' ;;
+          "workspace create") printf '%s\n' '{"result":{"workspace":{"workspace_id":"w7"},"tab":{"tab_id":"w7:t1"},"root_pane":{"pane_id":"w7:p1"}}}' ;;
           "workspace close") printf '%s\n' '{"result":{"type":"workspace_closed"}}' ;;
+          "workspace rename") printf '%s\n' '{"result":{"type":"workspace_renamed"}}' ;;
+          "tab rename") printf '%s\n' '{"result":{"type":"tab_renamed"}}' ;;
+          "tab create") printf '%s\n' '{"result":{"tab":{"tab_id":"w7:t2"},"root_pane":{"pane_id":"w7:p3"}}}' ;;
           "pane list") printf '%s\n' "$HERDR_PANES_JSON" ;;
           "pane split")
             [ "$HERDR_FAIL_SPLIT" = 0 ] || exit 1
             printf '%s\n' '{"result":{"pane":{"pane_id":"w7:p2"}}}'
             ;;
           "pane run") printf '%s\n' '{"result":{"type":"pane_run"}}' ;;
+          "pane rename") printf '%s\n' '{"result":{"type":"pane_renamed"}}' ;;
+          "pane report-metadata") printf '%s\n' '{"result":{"type":"pane_metadata_reported"}}' ;;
           *) exit 1 ;;
         esac
       SH
@@ -270,8 +339,15 @@ class WorktreeDriversTest < Minitest::Test
     )
   end
 
-  def workspace_list_json(workspace)
-    workspaces = workspace ? [{"label" => "signatures/demo", "workspace_id" => "w7"}] : []
+  def workspace_list_json(workspace, legacy: false, multiline: false)
+    label = if legacy
+      "signatures/demo"
+    elsif multiline
+      "sig/demo\nfeature/demo"
+    else
+      "sig/demo"
+    end
+    workspaces = workspace ? [{"label" => label, "workspace_id" => "w7"}] : []
     JSON.generate("result" => {"workspaces" => workspaces})
   end
 
@@ -279,7 +355,7 @@ class WorktreeDriversTest < Minitest::Test
     JSON.generate(
       "result" => {
         "panes" => [
-          {"pane_id" => "w7:p1", "cwd" => worktree},
+          {"pane_id" => "w7:p1", "cwd" => worktree, "agent" => "codex"},
           {"pane_id" => "w7:p2", "cwd" => worktree}
         ]
       }

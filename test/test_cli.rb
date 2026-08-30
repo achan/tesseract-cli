@@ -702,9 +702,13 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes script, "set -- 'worktree' 'start' 'portal'"
+    assert_includes script, "export TESSERACT_APP_SHORTHAND='sig'"
     assert_includes script, "herdr_command workspace create"
+    assert_includes script, "herdr_command tab rename"
+    assert_includes script, "herdr_command tab create"
     assert_includes script, "herdr_command pane split"
     assert_includes script, "herdr_command pane run"
+    assert_includes script, "herdr_command pane report-metadata"
     refute_includes script, "exec ./bin/tesseract"
     assert_empty stderr.string
   end

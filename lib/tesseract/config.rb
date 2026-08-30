@@ -26,15 +26,19 @@ module Tesseract
 
       data = load_yaml(path)
       data = host.rewrite_app_profile(data) if host
-      AppProfile.new(data)
+      AppProfile.new(with_app_shorthand(data))
     end
 
     def apps(host: nil)
       Dir.glob(File.join(@root, "config", "apps", "*.yml")).sort.map do |path|
         data = load_yaml(path)
         data = host.rewrite_app_profile(data) if host
-        AppProfile.new(data)
+        AppProfile.new(with_app_shorthand(data))
       end
+    end
+
+    def app_shorthand(id)
+      app_shorthands.fetch(id, id)
     end
 
     def hosts
@@ -44,6 +48,15 @@ module Tesseract
     end
 
     private
+
+    def app_shorthands
+      @app_shorthands ||= load_yaml(File.join(@root, "config", "app-shorthands.yml"))
+    end
+
+    def with_app_shorthand(data)
+      id = data.fetch("id")
+      data.merge("shorthand" => data.fetch("shorthand", app_shorthand(id)))
+    end
 
     def load_yaml(path)
       YAML.safe_load_file(path, aliases: true)
@@ -181,13 +194,17 @@ module Tesseract
   end
 
   class AppProfile
-    attr_reader :id, :repo, :main_path, :worktree_root, :domain, :base_port,
+    attr_reader :id, :shorthand, :repo, :main_path, :worktree_root, :domain, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
       :setup_commands, :env_overrides, :url_template, :dns_zone,
       :worktree_driver, :session_driver, :default_branch, :fetch_on_create
 
     def initialize(data)
       @id = required(data, "id")
+      @shorthand = data.fetch("shorthand", @id)
+      unless @shorthand.match?(/\A[a-z][a-z0-9_-]*\z/)
+        raise Config::Error, "#{@id} profile has invalid shorthand: #{@shorthand}"
+      end
       @repo = required(data, "repo")
       @main_path = required(data, "main_path")
       @domain = required(data, "domain")

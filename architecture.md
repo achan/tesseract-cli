@@ -99,7 +99,7 @@ For `tars`, the profile should eventually include:
 - Tailscale identity and IP
 - Base repo path: `~/repos`
 - Service backend: shared Docker Compose stack
-- Default shell/session tool: `tmux`
+- Default shell/session tools: `tmux` and Herdr, selected per app
 
 `case` should eventually get its own host profile, but it is out of scope for
 the first implementation phase.
@@ -145,7 +145,7 @@ A worktree session is the unit of active development.
 Each worktree session should have:
 
 - One git worktree
-- One tmux session
+- One tmux session or Herdr workspace
 - One assigned app port
 - One PostgreSQL database
 - One Redis DB index
@@ -317,5 +317,5 @@ The implementation should continue to satisfy these architectural requirements:
 - Independent clones per machine
 - Shared PostgreSQL and Redis per host
 - Per-worktree isolation through worktrees, ports, databases, Redis DBs, env
-  overrides, and tmux sessions
+  overrides, and terminal runtimes
 - 1Password-based secret generation

@@ -52,7 +52,7 @@ module Tesseract
       else
         usage("unknown command: #{command}")
       end
-    rescue Config::Error, RemoteRunner::Error, LocalRunner::Error => error
+    rescue Config::Error, InteractiveRunner::Error, RemoteRunner::Error, LocalRunner::Error => error
       @stderr.puts("error: #{error.message}")
       1
     end
@@ -127,7 +127,7 @@ module Tesseract
         echo "hostname=$(hostname)"
         printf "tailscale_ip="
         tailscale ip -4 2>/dev/null | head -n1 || true
-        for cmd in git docker tmux mise op ruby; do
+        for cmd in git docker tmux herdr jq mise op ruby; do
           if command -v "$cmd" >/dev/null 2>&1; then
             echo "$cmd=ok"
           else
@@ -156,7 +156,10 @@ module Tesseract
     def live
       return live_single if @host_explicit
 
-      @stdout.printf("%-8s %-32s %8s %-48s %s\n", "HOST", "TMUX", "RSS", "URL", "CHANGELOG")
+      @stdout.printf(
+        "%-8s %-8s %-32s %8s %-48s %s\n",
+        "HOST", "RUNTIME", "TARGET", "RSS", "URL", "CHANGELOG"
+      )
       failed = false
       @config.hosts.reject(&:local?).each do |target_host|
         output = StringIO.new
@@ -263,7 +266,7 @@ module Tesseract
           fi
         }
 
-        printf "%-32s %8s %-48s %s\\n" "TMUX" "RSS" "URL" "CHANGELOG"
+        printf "%-8s %-32s %8s %-48s %s\\n" "RUNTIME" "TARGET" "RSS" "URL" "CHANGELOG"
         while IFS="$(printf '\\t')" read -r app main_path; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
@@ -277,13 +280,18 @@ module Tesseract
                 slug=$(basename "$path")
                 status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
                 running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
+                runtime=$(printf "%s\\n" "$status" | sed -n 's/^runtime=//p' | tail -n1)
+                target=$(printf "%s\\n" "$status" | sed -n 's/^target=//p' | tail -n1)
                 tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
-                [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                [ -n "$runtime" ] || runtime=tmux
+                [ -n "$target" ] || target="$tmux_session"
+                [ -n "$target" ] || target="$session"
                 url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
-                if [ "$running" = "yes" ] && [ -n "$tmux_session" ] && [ -n "$url" ]; then
+                if [ "$running" = "yes" ] && [ -n "$target" ] && [ -n "$url" ]; then
                   rss=$(format_rss "$(rss_for_path "$path")")
                   changelog=$(changelog_for_path "$path")
-                  printf "%-32s %8s %-48s %s\\n" "$tmux_session" "$rss" "$url" "$changelog"
+                  printf "%-8s %-32s %8s %-48s %s\\n" "$runtime" "$target" "$rss" "$url" "$changelog"
                   touch "$found_file"
                 fi
                 ;;
@@ -393,10 +401,11 @@ EOF
         echo "main_path=#{profile.main_path}"
         echo "domain=#{profile.domain}"
         echo "worktree_driver=#{profile.worktree_driver}"
+        echo "session_driver=#{profile.session_driver}"
         [ -d #{Shell.escape(profile.main_path)} ] && echo "main_clone=ok" || echo "main_clone=missing"
         #{shared_env_check}
         #{repo_tesseract_check}
-        for cmd in git tmux mise; do
+        for cmd in git #{profile.session_driver} #{profile.session_driver == "herdr" ? "jq" : ""} mise; do
           if command -v "$cmd" >/dev/null 2>&1; then
             echo "$cmd=ok"
           else
@@ -510,10 +519,15 @@ EOF
     end
 
     def attach
-      session = require_arg("tmux session")
+      target = require_arg("session or app id")
+      if @argv.empty?
+        return interactive_runner.attach(target)
+      end
+
+      slug = @argv.shift
       return usage("unexpected attach argument: #{@argv.first}") unless @argv.empty?
 
-      interactive_runner.attach(session)
+      interactive_runner.attach_worktree(app_profile(target), slug)
     end
 
     def worktree
@@ -551,7 +565,7 @@ EOF
           rm -f "$found_file"
         }
         trap cleanup_worktree_list EXIT
-        printf "%-10s %-22s %-32s %s\\n" "APP" "WORKTREE" "TMUX" "URL"
+        printf "%-10s %-22s %-8s %-32s %s\\n" "APP" "WORKTREE" "RUNTIME" "TARGET" "URL"
         while IFS="$(printf '\\t')" read -r app main_path worktree_driver; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
@@ -565,20 +579,32 @@ EOF
                 if [ "$worktree_driver" = "git" ]; then
                   session="$(printf "%s_%s" "$app" "$(printf "%s" "$slug" | tr '-' '_' | tr -cd '[:alnum:]_')")"
                   if tmux has-session -t "=$session" 2>/dev/null; then
-                    tmux_session="$session"
+                    runtime=tmux
+                    target="$session"
                   else
-                    tmux_session="-"
+                    runtime=none
+                    target="-"
                   fi
                   url="-"
                 else
                   status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                  running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
+                  runtime=$(printf "%s\\n" "$status" | sed -n 's/^runtime=//p' | tail -n1)
+                  target=$(printf "%s\\n" "$status" | sed -n 's/^target=//p' | tail -n1)
                   tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^tmux_session=//p' | tail -n1)
-                  [ -n "$tmux_session" ] || tmux_session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                  session=$(printf "%s\\n" "$status" | sed -n 's/^session=//p' | tail -n1)
+                  if [ -z "$runtime" ]; then
+                    [ "$running" = "yes" ] && runtime=tmux || runtime=none
+                  fi
+                  [ -n "$target" ] || target="$tmux_session"
+                  [ -n "$target" ] || target="$session"
+                  [ "$runtime" != "none" ] || target="-"
                   url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
                 fi
-                [ -n "$tmux_session" ] || tmux_session="-"
+                [ -n "$runtime" ] || runtime="none"
+                [ -n "$target" ] || target="-"
                 [ -n "$url" ] || url="-"
-                printf "%-10s %-22s %-32s %s\\n" "$app" "$slug" "$tmux_session" "$url"
+                printf "%-10s %-22s %-8s %-32s %s\\n" "$app" "$slug" "$runtime" "$target" "$url"
                 touch "$found_file"
                 ;;
             esac
@@ -1444,6 +1470,7 @@ EOF
           tesseract [--host HOST] app list
           tesseract [--host HOST] app doctor|clone|pull|setup APP
           tesseract [--host HOST] attach SESSION
+          tesseract [--host HOST] attach APP SLUG
           tesseract [--host HOST] worktree list [APP]
           tesseract [--host HOST] worktree create APP SLUG [BRANCH]
           tesseract [--host HOST] worktree start APP SLUG [--api-url URL]

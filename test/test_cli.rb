@@ -23,10 +23,16 @@ class CLITest < Minitest::Test
   end
 
   class AttachCaptureRunner
-    attr_reader :session
+    attr_reader :session, :profile, :slug
 
     def attach(session)
       @session = session
+      0
+    end
+
+    def attach_worktree(profile, slug)
+      @profile = profile
+      @slug = slug
       0
     end
   end
@@ -307,7 +313,8 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "TMUX"
+    assert_includes script, "RUNTIME"
+    assert_includes script, "TARGET"
     assert_includes script, "RSS"
     assert_includes script, "URL"
     assert_includes script, "CHANGELOG"
@@ -337,8 +344,8 @@ class CLITest < Minitest::Test
     stdout = StringIO.new
     stderr = StringIO.new
     outputs = {
-      "case" => "TMUX RSS URL CHANGELOG\nmobile_dashboard_demo 10MiB http://localhost:8081 -\n",
-      "tars" => "TMUX RSS URL CHANGELOG\ndocovia_demo 1GiB https://app.example -\n"
+      "case" => "RUNTIME TARGET RSS URL CHANGELOG\ntmux mobile_dashboard_demo 10MiB http://localhost:8081 -\n",
+      "tars" => "RUNTIME TARGET RSS URL CHANGELOG\ntmux docovia_demo 1GiB https://app.example -\n"
     }
     factory = lambda do |target_host, stdout:, stderr:|
       Object.new.tap do |fake|
@@ -351,8 +358,8 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes stdout.string, "HOST"
-    assert_includes stdout.string, "case     mobile_dashboard_demo"
-    assert_includes stdout.string, "tars     docovia_demo"
+    assert_includes stdout.string, "case     tmux mobile_dashboard_demo"
+    assert_includes stdout.string, "tars     tmux docovia_demo"
     refute_match(/^local\s/, stdout.string)
     assert_empty stderr.string
   end
@@ -365,7 +372,7 @@ class CLITest < Minitest::Test
         fake.define_singleton_method(:run) do |_script|
           raise Tesseract::RemoteRunner::Error, "unreachable" if target_host.id == "case"
 
-          stdout.print("TMUX RSS URL CHANGELOG\ndocovia_demo 1GiB https://app.example -\n")
+          stdout.print("RUNTIME TARGET RSS URL CHANGELOG\ntmux docovia_demo 1GiB https://app.example -\n")
           0
         end
       end
@@ -375,7 +382,7 @@ class CLITest < Minitest::Test
     status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
 
     assert_equal 1, status
-    assert_includes stdout.string, "tars     docovia_demo"
+    assert_includes stdout.string, "tars     tmux docovia_demo"
     assert_includes stderr.string, "warning: case"
   end
 
@@ -421,7 +428,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_worktree_list_prints_worktree_tmux_session_and_url
+  def test_worktree_list_prints_runtime_target_and_url
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -439,7 +446,8 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes script, "APP"
     assert_includes script, "WORKTREE"
-    assert_includes script, "TMUX"
+    assert_includes script, "RUNTIME"
+    assert_includes script, "TARGET"
     assert_includes script, "URL"
     assert_includes script, "/home/bot/repos/sprung-app"
     assert_includes script, "/home/bot/repos/flexday"
@@ -774,8 +782,31 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
+  def test_attach_uses_app_and_slug_for_runtime_aware_attachment
+    stdout = StringIO.new
+    stderr = StringIO.new
+    attach_runner = AttachCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["attach", "signatures", "general-dev", "--host", "tars"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@interactive_runner, attach_runner)
+
+    status = cli.run
+
+    assert_equal 0, status
+    assert_equal "signatures", attach_runner.profile.id
+    assert_equal "general-dev", attach_runner.slug
+    assert_empty stdout.string
+    assert_empty stderr.string
+  end
+
   def test_attach_rejects_extra_arguments
-    status, _stdout, stderr = run_cli("attach", "docovia_exam_viewer_optimization", "extra", "--host", "local")
+    status, _stdout, stderr = run_cli(
+      "attach", "docovia", "demo", "extra", "--host", "local"
+    )
 
     assert_equal 1, status
     assert_includes stderr, "unexpected attach argument: extra"
@@ -804,6 +835,54 @@ class CLITest < Minitest::Test
 
     assert_includes script, "/Users/bot/.homebrew/bin"
     assert_includes script, "exec tmux attach -t '\\''eso_pr_2'\\''"
+  end
+
+  def test_interactive_runner_builds_remote_default_herdr_attach_command
+    config = Tesseract::Config.new(File.expand_path("..", __dir__))
+    host = config.host("tars")
+    runner = Tesseract::InteractiveRunner.new(host)
+
+    assert_equal ["herdr", "--remote", "bot@tars"], runner.herdr_attach_command
+    assert_equal ["herdr", "--remote", "bot@tars", "--session", "agents"],
+      runner.herdr_attach_command("agents")
+  end
+
+  def test_interactive_runner_uses_legacy_tmux_reported_by_repository_adapter
+    config = Tesseract::Config.new(File.expand_path("..", __dir__))
+    runner = Tesseract::InteractiveRunner.new(config.host("tars"))
+    attached = nil
+    runner.define_singleton_method(:worktree_status) do |_profile, _slug|
+      {"running" => "yes", "tmux_session" => "signatures_general_dev"}
+    end
+    runner.define_singleton_method(:attach) { |session| attached = session }
+
+    runner.attach_worktree(config.app("signatures"), "general-dev")
+
+    assert_equal "signatures_general_dev", attached
+  end
+
+  def test_interactive_runner_focuses_and_attaches_reported_herdr_workspace
+    config = Tesseract::Config.new(File.expand_path("..", __dir__))
+    runner = Tesseract::InteractiveRunner.new(config.host("tars"))
+    focused = nil
+    executed = nil
+    runner.define_singleton_method(:worktree_status) do |_profile, _slug|
+      {
+        "running" => "yes",
+        "runtime" => "herdr",
+        "session" => "default",
+        "workspace_id" => "w7"
+      }
+    end
+    runner.define_singleton_method(:focus_herdr_workspace) do |workspace_id, session|
+      focused = [workspace_id, session]
+    end
+    runner.define_singleton_method(:exec) { |*command| executed = command }
+
+    runner.attach_worktree(config.app("signatures"), "general-dev")
+
+    assert_equal ["w7", "default"], focused
+    assert_equal ["herdr", "--remote", "bot@tars"], executed
   end
 
   def test_app_clone_preserves_seeded_env_only_directory

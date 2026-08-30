@@ -18,6 +18,7 @@ class ConfigTest < Minitest::Test
     assert_equal "bot@tars", host.ssh_target
     assert_equal "achan@tars", host.service_ssh_target
     assert_equal "/home/bot/repos", host.base_repo_path
+    assert_includes host.command_path, "/home/bot/.local/bin"
     refute host.local?
   end
 
@@ -107,6 +108,7 @@ class ConfigTest < Minitest::Test
     assert_equal "/home/bot/repos/signatures", app.main_path
     assert_nil app.worktree_root
     assert_equal "repository", app.worktree_driver
+    assert_equal "herdr", app.session_driver
     assert_equal "main", app.default_branch
     assert app.fetch_on_create
     refute app.git_worktrees?
@@ -219,5 +221,19 @@ class ConfigTest < Minitest::Test
     end
 
     assert_equal "example git worktree profile is missing worktree_root", error.message
+  end
+
+  def test_app_profile_rejects_unknown_session_driver
+    error = assert_raises(Tesseract::Config::Error) do
+      Tesseract::AppProfile.new(
+        "id" => "example",
+        "repo" => "git@github.com:example/example.git",
+        "main_path" => "/tmp/example",
+        "domain" => "example.test",
+        "session_driver" => "screen"
+      )
+    end
+
+    assert_equal "example profile has invalid session_driver: screen", error.message
   end
 end

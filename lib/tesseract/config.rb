@@ -183,7 +183,7 @@ module Tesseract
     attr_reader :id, :repo, :main_path, :worktree_root, :domain, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
       :setup_commands, :env_overrides, :url_template, :dns_zone,
-      :worktree_driver, :default_branch, :fetch_on_create
+      :worktree_driver, :session_driver, :default_branch, :fetch_on_create
 
     def initialize(data)
       @id = required(data, "id")
@@ -194,6 +194,10 @@ module Tesseract
       @worktree_driver = data.fetch("worktree_driver", "repository")
       unless %w[repository git].include?(@worktree_driver)
         raise Config::Error, "#{@id} profile has invalid worktree_driver: #{@worktree_driver}"
+      end
+      @session_driver = data.fetch("session_driver", "tmux")
+      unless %w[tmux herdr].include?(@session_driver)
+        raise Config::Error, "#{@id} profile has invalid session_driver: #{@session_driver}"
       end
       if @worktree_driver == "git" && @worktree_root.to_s.empty?
         raise Config::Error, "#{@id} git worktree profile is missing worktree_root"

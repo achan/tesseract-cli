@@ -23,7 +23,7 @@ There are three layers:
 
 The top-level CLI handles host/app discovery, SSH, shared services, DNS, certs,
 and dispatch. Worktree commands intentionally delegate into the app repository
-so each app can decide how to create databases, env files, tmux sessions,
+so each app can decide how to create databases, env files, terminal sessions,
 servers, workers, and asset processes.
 
 ## Command Shape
@@ -40,6 +40,7 @@ bin/tesseract services up|down|logs
 bin/tesseract app list
 bin/tesseract app doctor|clone|pull|setup APP
 bin/tesseract attach SESSION
+bin/tesseract attach APP SLUG
 bin/tesseract worktree list [APP]
 bin/tesseract worktree create|start|stop|status|remove APP SLUG [BRANCH]
 bin/tesseract dns doctor|sync APP
@@ -100,8 +101,9 @@ bin/tesseract worktree start flexday calendar-refresh --host tars
 - SSH access to the service user, for example `achan@tars`.
 - Tailscale on the machine used to open remote apps in a browser.
 - Docker access for the service user, not the runtime user.
-- `mise`, `git`, `tmux`, `ruby`, and app-specific runtimes on the execution
-  host.
+- `mise`, `git`, `ruby`, the configured session runtime (`tmux` or Herdr), and
+  app-specific runtimes on the execution host. Herdr-backed adapters also
+  require `jq`.
 - A Cloudflare API token with `Zone:Read` and `DNS:Edit` for `achan.bot` when
   running DNS or certificate commands.
 
@@ -250,14 +252,20 @@ Certificates are installed under the host cert directory. For Docovia on `tars`:
 
 ## Worktree Lifecycle
 
-List worktrees with their tmux session names and URLs:
+List worktrees with their runtime, attach target, and URL:
 
 ```bash
 bin/tesseract worktree list --host tars
 bin/tesseract worktree list docovia --host tars
 ```
 
-Attach to a worktree's tmux session:
+Attach to a worktree by app and slug, regardless of its runtime:
+
+```bash
+bin/tesseract attach signatures general-dev --host tars
+```
+
+The legacy one-argument form remains available for direct tmux attachment:
 
 ```bash
 bin/tesseract attach docovia_smoke_test --host tars
@@ -315,9 +323,11 @@ bin/tesseract worktree status mobile-dashboard cost-calculator --host case
 bin/tesseract attach mobile_dashboard_cost_calculator --host case
 ```
 
-`stop` kills the app's tmux session and processes but leaves the worktree,
+Signatures uses the default Herdr session and creates a `signatures/<slug>`
+workspace with a dev-server pane and a Codex pane. Other configured apps still
+use tmux. `stop` closes the app's runtime and processes but leaves the worktree,
 database, env files, and registry entry in place. `remove` is destructive: it
-stops the session, removes the git worktree, prunes registry metadata, and lets
+stops the runtime, removes the git worktree, prunes registry metadata, and lets
 the repo-local adapter clean up app-specific state.
 
 Worktree commands run this shape on the selected host:
@@ -341,13 +351,13 @@ bin/tesseract live --host tars
 Example output:
 
 ```text
-TMUX                              RSS URL                                              CHANGELOG
-docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102          https://pages-tars.achan.bot/p/<opaque-token>.html
-docovia_api_v2_foundation      1.4GiB https://app.docovia.tars.achan.bot:3104          https://pages-tars.achan.bot/p/<opaque-token>.html
+RUNTIME  TARGET                           RSS URL                                      CHANGELOG
+tmux     docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
+herdr    default:signatures/general-dev 2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 
 `live` scans each configured app's main clone, asks the repo-local adapter for
-each worktree status, and prints running tmux sessions with their URLs. RSS is
+each worktree status, and prints running runtime targets with their URLs. RSS is
 the aggregate resident memory for processes whose current working directory is
 the worktree path or one of its subdirectories. Changelog URLs use the stable
 opaque token registered by the changelog publisher when present, with a

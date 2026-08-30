@@ -1,0 +1,465 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_ID="${TESSERACT_APP_ID:-signatures}"
+MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
+WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
+DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
+PORT_START="${TESSERACT_PORT_START:?missing TESSERACT_PORT_START}"
+PORT_COUNT="${TESSERACT_PORT_COUNT:?missing TESSERACT_PORT_COUNT}"
+DATABASE_PREFIX="${TESSERACT_DATABASE_PREFIX:?missing TESSERACT_DATABASE_PREFIX}"
+CERT_PATH="${TESSERACT_CERT_PATH:?missing TESSERACT_CERT_PATH}"
+KEY_PATH="${TESSERACT_KEY_PATH:?missing TESSERACT_KEY_PATH}"
+PG_HOST="${TESSERACT_PGHOST:-127.0.0.1}"
+PG_USER="${TESSERACT_PGUSER:-bot}"
+PG_PASSWORD="${TESSERACT_PGPASSWORD:-dev}"
+WEB_COMMAND="${TESSERACT_WEB_COMMAND:-bin/dev}"
+AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
+HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
+PORT_END=$((PORT_START + PORT_COUNT - 1))
+
+usage() {
+  cat >&2 <<USAGE
+Usage:
+  tesseract worktree create ${APP_ID} <slug> [branch]
+  tesseract worktree start ${APP_ID} <slug>
+  tesseract worktree stop ${APP_ID} <slug>
+  tesseract worktree status ${APP_ID} <slug>
+  tesseract worktree remove ${APP_ID} <slug> [--force]
+USAGE
+  exit 1
+}
+
+validate_slug() {
+  case "$1" in
+    ""|*[!A-Za-z0-9._-]*)
+      echo "invalid worktree slug: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+sanitize_slug() {
+  printf "%s" "$1" | tr '-' '_' | tr -cd '[:alnum:]_'
+}
+
+worktree_path() {
+  printf "%s/%s" "$WORKTREE_ROOT" "$1"
+}
+
+legacy_session_name() {
+  printf "signatures_%s" "$(sanitize_slug "$1")"
+}
+
+workspace_label() {
+  printf "%s/%s" "$APP_ID" "$1"
+}
+
+runtime_spec() {
+  path="$1"
+  if [ -f "$path/.ruby-version" ]; then
+    version=$(cat "$path/.ruby-version")
+    printf "ruby@%s" "${version#ruby-}"
+  fi
+}
+
+run_runtime() {
+  path="$1"
+  shift
+  spec=$(runtime_spec "$path")
+  if [ -n "$spec" ] && command -v mise >/dev/null 2>&1; then
+    (cd "$path" && mise exec "$spec" -- "$@")
+  else
+    (cd "$path" && "$@")
+  fi
+}
+
+runtime_prefix() {
+  path="$1"
+  spec=$(runtime_spec "$path")
+  if [ -n "$spec" ] && command -v mise >/dev/null 2>&1; then
+    printf "mise exec %q -- " "$spec"
+  fi
+}
+
+allocated_ports() {
+  [ -d "$WORKTREE_ROOT" ] || return 0
+  find "$WORKTREE_ROOT" -maxdepth 2 -name .env.development.local -print 2>/dev/null |
+    while IFS= read -r env_file; do
+      sed -n 's/^PORT=//p' "$env_file" | head -1 | tr -d '"' | tr -d "'"
+    done
+}
+
+port_is_listening() {
+  port="$1"
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "ss is required to allocate Signatures worktree ports" >&2
+    exit 1
+  fi
+  ss -ltnH "sport = :$port" 2>/dev/null | grep -q .
+}
+
+choose_port() {
+  candidate="$PORT_START"
+  while [ "$candidate" -le "$PORT_END" ]; do
+    if ! allocated_ports | grep -qx "$candidate" && ! port_is_listening "$candidate"; then
+      printf "%s" "$candidate"
+      return
+    fi
+    candidate=$((candidate + 1))
+  done
+  echo "no available port in ${PORT_START}..${PORT_END}" >&2
+  exit 1
+}
+
+write_runtime_env() {
+  path="$1"
+  port="$2"
+  database_name="$3"
+  cat > "$path/.env.development.local" <<EOF
+PORT=${port}
+APP_HOST=${DOMAIN}
+APP_PORT=${port}
+APP_PROTOCOL=https
+SSL_CERT_PATH=${CERT_PATH}
+SSL_KEY_PATH=${KEY_PATH}
+DB_NAME=${database_name}
+TEST_DB_NAME=${database_name}_test
+PGHOST=${PG_HOST}
+PGUSER=${PG_USER}
+PGPASSWORD=${PG_PASSWORD}
+EOF
+  chmod 0600 "$path/.env.development.local"
+
+  cat > "$path/.env.test.local" <<EOF
+TEST_DB_NAME=${database_name}_test
+PGHOST=${PG_HOST}
+PGUSER=${PG_USER}
+PGPASSWORD=${PG_PASSWORD}
+EOF
+  chmod 0600 "$path/.env.test.local"
+}
+
+prepare_database() {
+  path="$1"
+  database_name="$2"
+  PGHOST="$PG_HOST" PGUSER="$PG_USER" PGPASSWORD="$PG_PASSWORD" \
+    createdb "$database_name" 2>/dev/null || true
+  run_runtime "$path" bin/rails db:prepare
+}
+
+port_for_slug() {
+  env_file="$(worktree_path "$1")/.env.development.local"
+  if [ ! -f "$env_file" ]; then
+    echo "missing .env.development.local for $1" >&2
+    exit 1
+  fi
+  port=$(sed -n 's/^PORT=//p' "$env_file" | head -1 | tr -d '"' | tr -d "'")
+  case "$port" in
+    ""|*[!0-9]*)
+      echo "invalid PORT in $env_file" >&2
+      exit 1
+      ;;
+  esac
+  printf "%s" "$port"
+}
+
+ensure_certificate() {
+  if [ ! -r "$CERT_PATH" ] || [ ! -r "$KEY_PATH" ]; then
+    echo "missing Signatures certificate files:" >&2
+    echo "  cert: $CERT_PATH" >&2
+    echo "  key:  $KEY_PATH" >&2
+    exit 1
+  fi
+}
+
+remove_stale_runtime_cache() {
+  path="$1"
+  [ -d "$path/tmp/cache/bootsnap" ] || return 0
+  [ -z "$(find "$path" -mindepth 1 -maxdepth 1 ! -name tmp -print -quit)" ] || return 0
+  [ -z "$(find "$path/tmp" -mindepth 1 -maxdepth 1 ! -name cache -print -quit)" ] || return 0
+
+  rm -rf "$path/tmp/cache"
+  rmdir "$path/tmp" "$path"
+}
+
+herdr_command() {
+  HERDR_SESSION="$HERDR_SESSION_NAME" herdr "$@"
+}
+
+load_workspace() {
+  label="$1"
+  workspace_json=$(herdr_command workspace list)
+  WORKSPACE_COUNT=$(printf "%s" "$workspace_json" |
+    jq -r --arg label "$label" '[.result.workspaces[] | select(.label == $label)] | length')
+  if [ "$WORKSPACE_COUNT" -gt 1 ]; then
+    echo "multiple Herdr workspaces found for $label" >&2
+    exit 1
+  fi
+  WORKSPACE_ID=$(printf "%s" "$workspace_json" |
+    jq -r --arg label "$label" '.result.workspaces[] | select(.label == $label) | .workspace_id')
+}
+
+verify_workspace_path() {
+  workspace_id="$1"
+  path="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  pane_count=$(printf "%s" "$panes_json" | jq -r '.result.panes | length')
+  mismatch_count=$(printf "%s" "$panes_json" |
+    jq -r --arg path "$path" '[.result.panes[] | select(.cwd != $path)] | length')
+  if [ "$pane_count" -eq 0 ] || [ "$mismatch_count" -ne 0 ]; then
+    echo "Herdr workspace $workspace_id is not rooted at $path" >&2
+    exit 1
+  fi
+}
+
+emit_herdr_runtime() {
+  slug="$1"
+  path="$2"
+  port="$3"
+  workspace_id="$4"
+  label=$(workspace_label "$slug")
+  echo "path=$path"
+  echo "port=$port"
+  echo "url=https://${DOMAIN}:${port}"
+  echo "running=yes"
+  echo "runtime=herdr"
+  echo "session=$HERDR_SESSION_NAME"
+  echo "workspace_id=$workspace_id"
+  echo "target=${HERDR_SESSION_NAME}:${label}"
+}
+
+create_worktree() {
+  slug="$1"
+  branch="${2:-feature/$slug}"
+  branch="${branch#origin/}"
+  path=$(worktree_path "$slug")
+
+  if [ ! -d "$MAIN_PATH/.git" ]; then
+    echo "main clone is missing at $MAIN_PATH" >&2
+    exit 1
+  fi
+  mkdir -p "$WORKTREE_ROOT"
+  remove_stale_runtime_cache "$path"
+  if [ -d "$path" ]; then
+    echo "worktree already exists: $path"
+    return
+  fi
+
+  git -C "$MAIN_PATH" fetch --prune origin >/dev/null 2>&1 || true
+  git check-ref-format --branch "$branch" >/dev/null
+  if git -C "$MAIN_PATH" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$MAIN_PATH" worktree add "$path" "$branch"
+  elif git -C "$MAIN_PATH" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    git -C "$MAIN_PATH" worktree add --track -b "$branch" "$path" "origin/$branch"
+  elif git -C "$MAIN_PATH" show-ref --verify --quiet refs/remotes/origin/main; then
+    git -C "$MAIN_PATH" worktree add --no-track -b "$branch" "$path" origin/main
+  else
+    git -C "$MAIN_PATH" worktree add --no-track -b "$branch" "$path" main
+  fi
+
+  port=$(choose_port)
+  database_name="${DATABASE_PREFIX}_$(sanitize_slug "$slug")"
+  write_runtime_env "$path" "$port" "$database_name"
+  run_runtime "$path" bundle check || run_runtime "$path" bundle install
+  prepare_database "$path" "$database_name"
+
+  echo "created ${APP_ID}/${slug} branch=${branch} port=${port} db=${database_name} path=${path}"
+  echo "url=https://${DOMAIN}:${port}"
+}
+
+rollback_workspace() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -ne 0 ]; then
+    workspace_id="${CREATED_WORKSPACE_ID:-}"
+    if [ -z "$workspace_id" ]; then
+      load_workspace "${CREATED_WORKSPACE_LABEL:-}" >/dev/null 2>&1 || true
+      [ "${WORKSPACE_COUNT:-0}" -eq 1 ] && workspace_id="${WORKSPACE_ID:-}"
+    fi
+    [ -z "$workspace_id" ] || herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
+  fi
+  exit "$code"
+}
+
+start_worktree() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  if [ ! -d "$path" ] || ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "worktree is missing: $path" >&2
+    exit 1
+  fi
+
+  legacy_session=$(legacy_session_name "$slug")
+  label=$(workspace_label "$slug")
+  load_workspace "$label"
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "legacy tmux session is still running: $legacy_session; stop it before starting Herdr" >&2
+    exit 1
+  fi
+
+  port=$(port_for_slug "$slug")
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    echo "workspace already running: $label"
+    emit_herdr_runtime "$slug" "$path" "$port" "$WORKSPACE_ID"
+    return
+  fi
+
+  ensure_certificate
+  run_runtime "$path" bundle check
+  prefix=$(runtime_prefix "$path")
+  printf -v dev_command \
+    'PORT=%q SSL_CERT_PATH=%q SSL_KEY_PATH=%q %s%s' \
+    "$port" "$CERT_PATH" "$KEY_PATH" "$prefix" "$WEB_COMMAND"
+  printf -v agent_command \
+    'TESSERACT_LIVE_ACTIVITY_APP=%q %s' \
+    "$APP_ID" "$AGENT_COMMAND"
+
+  CREATED_WORKSPACE_ID=""
+  CREATED_WORKSPACE_LABEL="$label"
+  trap rollback_workspace EXIT
+  workspace_create_json=$(herdr_command workspace create \
+    --cwd "$path" \
+    --label "$label" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  CREATED_WORKSPACE_ID=$(printf "%s" "$workspace_create_json" |
+    jq -er '.result.workspace.workspace_id')
+  root_pane_id=$(printf "%s" "$workspace_create_json" |
+    jq -er '.result.root_pane.pane_id')
+  split_json=$(herdr_command pane split \
+    --pane "$root_pane_id" \
+    --direction right \
+    --ratio 0.5 \
+    --cwd "$path" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  agent_pane_id=$(printf "%s" "$split_json" | jq -er '.result.pane.pane_id')
+  herdr_command pane run "$root_pane_id" "$dev_command" >/dev/null
+  herdr_command pane run "$agent_pane_id" "$agent_command" >/dev/null
+  trap - EXIT
+
+  echo "started $label"
+  emit_herdr_runtime "$slug" "$path" "$port" "$CREATED_WORKSPACE_ID"
+}
+
+stop_worktree() {
+  slug="$1"
+  label=$(workspace_label "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+  stopped=false
+  load_workspace "$label"
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    herdr_command workspace close "$WORKSPACE_ID" >/dev/null
+    echo "stopped $label"
+    stopped=true
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    tmux kill-session -t "=$legacy_session"
+    echo "stopped legacy tmux session $legacy_session"
+    stopped=true
+  fi
+  if [ "$stopped" = false ]; then
+    echo "not running: $label"
+  fi
+}
+
+status_worktree() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  label=$(workspace_label "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+
+  echo "app=$APP_ID"
+  echo "slug=$slug"
+  echo "path=$path"
+  if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "registered=yes"
+    echo "branch=$(git -C "$path" branch --show-current)"
+    port=$(port_for_slug "$slug")
+    echo "port=$port"
+    echo "url=https://${DOMAIN}:${port}"
+  else
+    echo "registered=no"
+    echo "url=-"
+  fi
+
+  load_workspace "$label"
+  legacy_running=false
+  tmux has-session -t "=$legacy_session" 2>/dev/null && legacy_running=true
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && [ "$legacy_running" = true ]; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    echo "running=yes"
+    echo "runtime=herdr"
+    echo "session=$HERDR_SESSION_NAME"
+    echo "workspace_id=$WORKSPACE_ID"
+    echo "target=${HERDR_SESSION_NAME}:${label}"
+  elif [ "$legacy_running" = true ]; then
+    echo "running=yes"
+    echo "runtime=tmux"
+    echo "tmux_session=$legacy_session"
+    echo "target=$legacy_session"
+    echo "legacy_runtime=yes"
+  else
+    echo "running=no"
+    echo "runtime=none"
+    echo "target=-"
+  fi
+}
+
+remove_worktree() {
+  slug="$1"
+  force="${2:-}"
+  path=$(worktree_path "$slug")
+
+  stop_worktree "$slug"
+  if [ ! -d "$path" ]; then
+    echo "worktree is missing: $path"
+    git -C "$MAIN_PATH" worktree prune
+    return
+  fi
+  if [ -n "$(git -C "$path" status --porcelain)" ] && [ "$force" != "--force" ]; then
+    echo "worktree has uncommitted changes; rerun with --force" >&2
+    git -C "$path" status --short >&2
+    exit 1
+  fi
+  if [ "$force" = "--force" ]; then
+    git -C "$MAIN_PATH" worktree remove --force "$path"
+  else
+    git -C "$MAIN_PATH" worktree remove "$path"
+  fi
+  git -C "$MAIN_PATH" worktree prune
+  echo "removed ${APP_ID}/${slug} path=${path}"
+}
+
+[ "${1:-}" = "worktree" ] || usage
+action="${2:-}"
+slug="${3:-}"
+shift 3 || usage
+validate_slug "$slug"
+
+case "$action" in
+  create)
+    [ "$#" -le 1 ] || usage
+    create_worktree "$slug" "$@"
+    ;;
+  start|stop|status)
+    [ "$#" -eq 0 ] || usage
+    "${action}_worktree" "$slug"
+    ;;
+  remove)
+    [ "$#" -le 1 ] || usage
+    [ "$#" -eq 0 ] || [ "$1" = "--force" ] || usage
+    remove_worktree "$slug" "$@"
+    ;;
+  *) usage ;;
+esac

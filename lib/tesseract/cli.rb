@@ -3,6 +3,7 @@ require "tesseract/interactive_runner"
 require "tesseract/local_runner"
 require "tesseract/remote_runner"
 require "tesseract/shell"
+require "tesseract/worktree_drivers"
 require "stringio"
 
 module Tesseract
@@ -52,7 +53,8 @@ module Tesseract
       else
         usage("unknown command: #{command}")
       end
-    rescue Config::Error, InteractiveRunner::Error, RemoteRunner::Error, LocalRunner::Error => error
+    rescue Config::Error, InteractiveRunner::Error, RemoteRunner::Error, LocalRunner::Error,
+      WorktreeDrivers::Error => error
       @stderr.puts("error: #{error.message}")
       1
     end
@@ -113,6 +115,14 @@ module Tesseract
 
     def app_profile(id)
       @config.app(id, host: host)
+    end
+
+    def worktree_driver_registry
+      @worktree_driver_registry ||= WorktreeDrivers::Registry.new(@root)
+    end
+
+    def central_worktree_driver(profile)
+      worktree_driver_registry.fetch(profile.worktree_driver)
     end
 
     def doctor
@@ -187,7 +197,8 @@ module Tesseract
     end
 
     def live_single
-      apps = @config.apps(host: host).map { |profile| "#{profile.id}\t#{profile.main_path}" }
+      profiles = @config.apps(host: host)
+      apps = profiles.map { |profile| "#{profile.id}\t#{profile.main_path}\t#{profile.worktree_driver}" }
       changelog_registry = File.join(File.dirname(host.base_repo_path), ".codex", "state", "worktree-changelogs.json")
       changelog_base_url = host.pages_domain ? "https://#{host.pages_domain}" : ""
 
@@ -195,8 +206,10 @@ module Tesseract
         set -u
         found_file=$(mktemp)
         rm -f "$found_file"
+        #{central_driver_runtime_script(profiles)}
         cleanup_live() {
           rm -f "$found_file"
+          [ -z "$driver_dir" ] || rm -rf "$driver_dir"
         }
         trap cleanup_live EXIT
 
@@ -267,10 +280,9 @@ module Tesseract
         }
 
         printf "%-8s %-32s %8s %-48s %s\\n" "RUNTIME" "TARGET" "RSS" "URL" "CHANGELOG"
-        while IFS="$(printf '\\t')" read -r app main_path; do
+        while IFS="$(printf '\\t')" read -r app main_path worktree_driver; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
-          [ -x "$main_path/bin/tesseract" ] || continue
 
           git -C "$main_path" worktree list --porcelain 2>/dev/null | while IFS= read -r line; do
             case "$line" in
@@ -278,7 +290,18 @@ module Tesseract
                 path=${line#worktree }
                 [ "$path" != "$main_path" ] || continue
                 slug=$(basename "$path")
-                status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                case "$worktree_driver" in
+                  git)
+                    continue
+                    ;;
+                  repository)
+                    [ -x "$main_path/bin/tesseract" ] || continue
+                    status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                    ;;
+                  *)
+                    status=$(central_worktree_status "$app" "$slug" 2>/dev/null || true)
+                    ;;
+                esac
                 running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
                 runtime=$(printf "%s\\n" "$status" | sed -n 's/^runtime=//p' | tail -n1)
                 target=$(printf "%s\\n" "$status" | sed -n 's/^target=//p' | tail -n1)
@@ -383,16 +406,21 @@ EOF
     end
 
     def app_doctor(profile)
-      repo_tesseract_check = if profile.git_worktrees?
+      repo_tesseract_check = unless profile.repository_worktrees?
         'echo "repo_tesseract=not_required"'
       else
         "[ -x #{Shell.escape(File.join(profile.main_path, "bin", "tesseract"))} ] && echo \"repo_tesseract=ok\" || echo \"repo_tesseract=missing\""
       end
-      shared_env_check = if profile.git_worktrees?
+      shared_env_check = unless profile.repository_worktrees?
         'echo "shared_env=not_required"'
       else
         "[ -f #{Shell.escape(profile.env_shared_path)} ] && echo \"shared_env=ok\" || echo \"shared_env=missing\""
       end
+      required_commands = ["git", "mise", profile.session_driver]
+      if worktree_driver_registry.central?(profile.worktree_driver)
+        required_commands.concat(central_worktree_driver(profile).required_commands)
+      end
+      required_commands = required_commands.uniq
 
       runner.run(<<~SH)
         set -u
@@ -405,7 +433,7 @@ EOF
         [ -d #{Shell.escape(profile.main_path)} ] && echo "main_clone=ok" || echo "main_clone=missing"
         #{shared_env_check}
         #{repo_tesseract_check}
-        for cmd in git #{profile.session_driver} #{profile.session_driver == "herdr" ? "jq" : ""} mise; do
+        for cmd in #{required_commands.join(" ")}; do
           if command -v "$cmd" >/dev/null 2>&1; then
             echo "$cmd=ok"
           else
@@ -527,7 +555,9 @@ EOF
       slug = @argv.shift
       return usage("unexpected attach argument: #{@argv.first}") unless @argv.empty?
 
-      interactive_runner.attach_worktree(app_profile(target), slug)
+      profile = app_profile(target)
+      status = worktree_status_data(profile, slug)
+      interactive_runner.attach_worktree(profile, slug, status: status)
     end
 
     def worktree
@@ -561,8 +591,10 @@ EOF
         set -u
         found_file=$(mktemp)
         rm -f "$found_file"
+        #{central_driver_runtime_script(profiles)}
         cleanup_worktree_list() {
           rm -f "$found_file"
+          [ -z "$driver_dir" ] || rm -rf "$driver_dir"
         }
         trap cleanup_worktree_list EXIT
         printf "%-10s %-22s %-8s %-32s %s\\n" "APP" "WORKTREE" "RUNTIME" "TARGET" "URL"
@@ -587,7 +619,11 @@ EOF
                   fi
                   url="-"
                 else
-                  status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                  if [ "$worktree_driver" = "repository" ]; then
+                    status=$("$main_path/bin/tesseract" worktree status "$slug" 2>/dev/null || true)
+                  else
+                    status=$(central_worktree_status "$app" "$slug" 2>/dev/null || true)
+                  fi
                   running=$(printf "%s\\n" "$status" | sed -n 's/^running=//p' | tail -n1)
                   runtime=$(printf "%s\\n" "$status" | sed -n 's/^runtime=//p' | tail -n1)
                   target=$(printf "%s\\n" "$status" | sed -n 's/^target=//p' | tail -n1)
@@ -620,6 +656,9 @@ EOF
 
     def worktree_dispatch(profile, action, slug, extra_args)
       return git_worktree_dispatch(profile, action, slug, extra_args) if profile.git_worktrees?
+      if worktree_driver_registry.central?(profile.worktree_driver)
+        return central_worktree_dispatch(profile, action, slug, extra_args)
+      end
 
       args = ["worktree", action, slug, *extra_args].map { |arg| Shell.escape(arg) }.join(" ")
       runner.run(<<~SH)
@@ -631,6 +670,63 @@ EOF
         fi
         exec ./bin/tesseract #{args}
       SH
+    end
+
+    def central_worktree_dispatch(profile, action, slug, extra_args)
+      unless slug.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/)
+        return usage("invalid worktree slug: #{slug}")
+      end
+
+      case action
+      when "create"
+        return usage("unexpected worktree create argument: #{extra_args[1]}") if extra_args.length > 1
+      when "status", "start", "stop"
+        return usage("unexpected worktree #{action} argument: #{extra_args.first}") unless extra_args.empty?
+      when "remove"
+        force = extra_args == ["--force"]
+        unless extra_args.empty? || force
+          return usage("unexpected worktree remove argument: #{extra_args.first}")
+        end
+      end
+
+      arguments = ["worktree", action, slug, *extra_args]
+      runner.run(
+        central_worktree_driver(profile).execution_script(
+          profile: profile,
+          host: host,
+          arguments: arguments
+        )
+      )
+    end
+
+    def worktree_status_data(profile, slug)
+      output = runner.capture(worktree_status_script(profile, slug))
+      output.lines.filter_map do |line|
+        key, value = line.chomp.split("=", 2)
+        [key, value] if value
+      end.to_h
+    end
+
+    def worktree_status_script(profile, slug)
+      if profile.git_worktrees?
+        git_worktree_status_script(profile, slug)
+      elsif worktree_driver_registry.central?(profile.worktree_driver)
+        central_worktree_driver(profile).execution_script(
+          profile: profile,
+          host: host,
+          arguments: ["worktree", "status", slug]
+        )
+      else
+        <<~SH
+          set -eu
+          cd #{Shell.escape(profile.main_path)}
+          if [ ! -x ./bin/tesseract ]; then
+            echo "missing repo-local ./bin/tesseract in #{profile.main_path}" >&2
+            exit 1
+          fi
+          exec ./bin/tesseract worktree status #{Shell.escape(slug)}
+        SH
+      end
     end
 
     def git_worktree_dispatch(profile, action, slug, extra_args)
@@ -711,9 +807,13 @@ EOF
     end
 
     def git_worktree_status(profile, slug)
+      runner.run(git_worktree_status_script(profile, slug))
+    end
+
+    def git_worktree_status_script(profile, slug)
       runtime = git_worktree_runtime(profile, slug)
       url_output = profile.git_server? ? 'echo "url=$url"' : 'echo "url=-"'
-      runner.run(<<~SH)
+      <<~SH
         set -u
         path=#{Shell.escape(File.join(profile.worktree_root, slug))}
         session=#{Shell.escape(git_worktree_session(profile, slug))}
@@ -1237,6 +1337,48 @@ EOF
         "PGUSER_VALUE" => profile.pguser,
         "ASSET_COMMAND" => profile.asset_command.to_s
       }.map { |key, value| "export #{key}=#{Shell.single_quoted(value)}" }.join("\n")
+    end
+
+    def central_driver_runtime_script(profiles)
+      central_profiles = profiles.select do |profile|
+        worktree_driver_registry.central?(profile.worktree_driver)
+      end
+      if central_profiles.empty?
+        return <<~SH.chomp
+          driver_dir=""
+          central_worktree_status() { return 1; }
+        SH
+      end
+
+      drivers = central_profiles.map { |profile| central_worktree_driver(profile) }.uniq(&:id)
+      installations = drivers.map(&:installation_script).join("\n")
+      cases = central_profiles.map do |profile|
+        driver = central_worktree_driver(profile)
+        command = driver.remote_command(
+          profile: profile,
+          host: host,
+          executable: '"$driver_dir"/' + Shell.escape(driver.id),
+          arguments: ["worktree", "status", '"$slug"']
+        )
+        <<~SH.chomp
+          #{Shell.escape(profile.id)})
+            #{command}
+            ;;
+        SH
+      end.join("\n")
+
+      <<~SH.chomp
+        driver_dir=$(mktemp -d)
+        #{installations}
+        central_worktree_status() {
+          app="$1"
+          slug="$2"
+          case "$app" in
+            #{cases}
+            *) return 1 ;;
+          esac
+        }
+      SH
     end
 
     def docker_access_guard

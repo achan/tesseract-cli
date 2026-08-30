@@ -1,4 +1,5 @@
 require "yaml"
+require "tesseract/worktree_drivers"
 
 module Tesseract
   class Config
@@ -192,15 +193,15 @@ module Tesseract
       @domain = required(data, "domain")
       @worktree_root = data["worktree_root"]
       @worktree_driver = data.fetch("worktree_driver", "repository")
-      unless %w[repository git].include?(@worktree_driver)
+      unless WorktreeDrivers::Registry.known_id?(@worktree_driver)
         raise Config::Error, "#{@id} profile has invalid worktree_driver: #{@worktree_driver}"
       end
       @session_driver = data.fetch("session_driver", "tmux")
       unless %w[tmux herdr].include?(@session_driver)
         raise Config::Error, "#{@id} profile has invalid session_driver: #{@session_driver}"
       end
-      if @worktree_driver == "git" && @worktree_root.to_s.empty?
-        raise Config::Error, "#{@id} git worktree profile is missing worktree_root"
+      if @worktree_driver != "repository" && @worktree_root.to_s.empty?
+        raise Config::Error, "#{@id} #{@worktree_driver} worktree profile is missing worktree_root"
       end
       @default_branch = data.fetch("default_branch", "main")
       @fetch_on_create = data.fetch("fetch_on_create", true)
@@ -225,6 +226,10 @@ module Tesseract
 
     def git_worktrees?
       worktree_driver == "git"
+    end
+
+    def repository_worktrees?
+      worktree_driver == "repository"
     end
 
     def git_server?

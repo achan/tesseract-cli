@@ -100,22 +100,27 @@ class ConfigTest < Minitest::Test
     assert_equal ["flexday.tars.achan.bot"], app.dns_records
   end
 
-  def test_loads_signatures_repository_worktree_profile
+  def test_loads_signatures_central_worktree_profile
     app = @config.app("signatures")
 
     assert_equal "signatures", app.id
     assert_equal "git@github.com:achan/signatures.git", app.repo
     assert_equal "/home/bot/repos/signatures", app.main_path
-    assert_nil app.worktree_root
-    assert_equal "repository", app.worktree_driver
+    assert_equal "/home/bot/repos/signatures-worktrees", app.worktree_root
+    assert_equal "signatures", app.worktree_driver
     assert_equal "herdr", app.session_driver
     assert_equal "main", app.default_branch
     assert app.fetch_on_create
     refute app.git_worktrees?
     refute app.git_server?
-    assert_nil app.base_port
+    assert_equal 6200, app.base_port
+    assert_equal 100, app.port_count
+    assert_equal "signatures_dev_worktree", app.database_prefix
+    assert_equal "bot", app.pguser
+    assert_equal "bin/dev", app.web_command
+    assert_equal "codex --yolo", app.agent_command
     assert_equal ["signatures.achan.bot"], app.dns_records
-    refute app.database_enabled?
+    assert app.database_enabled?
   end
 
   def test_loads_chrome_extensions_git_worktree_profile

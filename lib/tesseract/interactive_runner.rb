@@ -27,8 +27,7 @@ module Tesseract
       end
     end
 
-    def attach_worktree(profile, slug)
-      status = worktree_status(profile, slug)
+    def attach_worktree(profile, slug, status:)
       raise Error, "#{profile.id}/#{slug} is not running" unless status["running"] == "yes"
 
       runtime = status["runtime"]
@@ -65,20 +64,6 @@ module Tesseract
     end
 
     private
-
-    def worktree_status(profile, slug)
-      script = <<~SH
-        set -eu
-        export PATH=#{Shell.escape(@host.command_path)}
-        cd #{Shell.escape(profile.main_path)}
-        exec ./bin/tesseract worktree status #{Shell.escape(slug)}
-      SH
-      output = capture(script)
-      output.lines.filter_map do |line|
-        key, value = line.chomp.split("=", 2)
-        [key, value] if value
-      end.to_h
-    end
 
     def focus_herdr_workspace(workspace_id, session)
       script = <<~SH

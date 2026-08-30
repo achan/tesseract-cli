@@ -11,6 +11,7 @@ require "tesseract/cli"
 class CLITest < Minitest::Test
   class ScriptCaptureRunner
     attr_reader :scripts
+    attr_accessor :capture_output
 
     def initialize
       @scripts = []
@@ -20,19 +21,25 @@ class CLITest < Minitest::Test
       @scripts << script
       0
     end
+
+    def capture(script)
+      @scripts << script
+      capture_output.to_s
+    end
   end
 
   class AttachCaptureRunner
-    attr_reader :session, :profile, :slug
+    attr_reader :session, :profile, :slug, :status
 
     def attach(session)
       @session = session
       0
     end
 
-    def attach_worktree(profile, slug)
+    def attach_worktree(profile, slug, status:)
       @profile = profile
       @slug = slug
+      @status = status
       0
     end
   end
@@ -523,7 +530,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_create_delegates_to_repository_adapter
+  def test_signatures_worktree_create_uses_central_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -539,9 +546,11 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/signatures'"
-    assert_includes script,
-      "exec ./bin/tesseract 'worktree' 'create' 'portal' 'feature/portal'"
+    assert_includes script, "export TESSERACT_MAIN_PATH='/home/bot/repos/signatures'"
+    assert_includes script, "set -- 'worktree' 'create' 'portal' 'feature/portal'"
+    assert_includes script, "git -C \"$MAIN_PATH\" worktree add"
+    assert_includes script, "prepare_database \"$path\" \"$database_name\""
+    refute_includes script, "exec ./bin/tesseract"
     assert_empty stderr.string
   end
 
@@ -651,7 +660,7 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes runner.scripts.fetch(0),
-      "exec ./bin/tesseract 'worktree' 'create' 'portal'"
+      "set -- 'worktree' 'create' 'portal'"
     assert_empty stderr.string
   end
 
@@ -671,11 +680,12 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes runner.scripts.fetch(0),
-      "exec ./bin/tesseract 'worktree' 'create' 'portal' 'origin/feature/portal'"
+      "set -- 'worktree' 'create' 'portal' 'origin/feature/portal'"
+    assert_includes runner.scripts.fetch(0), 'branch="${branch#origin/}"'
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_start_delegates_to_repository_adapter
+  def test_signatures_worktree_start_uses_central_herdr_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -691,12 +701,15 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/signatures'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'portal'"
+    assert_includes script, "set -- 'worktree' 'start' 'portal'"
+    assert_includes script, "herdr_command workspace create"
+    assert_includes script, "herdr_command pane split"
+    assert_includes script, "herdr_command pane run"
+    refute_includes script, "exec ./bin/tesseract"
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_stop_delegates_to_repository_adapter
+  def test_signatures_worktree_stop_handles_herdr_and_legacy_tmux
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -712,13 +725,14 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/signatures'"
-    assert_includes script,
-      "exec ./bin/tesseract 'worktree' 'stop' 'portal-refresh'"
+    assert_includes script, "set -- 'worktree' 'stop' 'portal-refresh'"
+    assert_includes script, "herdr_command workspace close"
+    assert_includes script, 'tmux kill-session -t "=$legacy_session"'
+    refute_includes script, "exec ./bin/tesseract"
     assert_empty stderr.string
   end
 
-  def test_signatures_worktree_remove_delegates_to_repository_adapter
+  def test_signatures_worktree_remove_uses_central_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -734,8 +748,9 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/signatures'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'remove' 'portal'"
+    assert_includes script, "set -- 'worktree' 'remove' 'portal'"
+    assert_includes script, 'git -C "$MAIN_PATH" worktree remove'
+    refute_includes script, "exec ./bin/tesseract"
     assert_empty stderr.string
   end
 
@@ -786,12 +801,22 @@ class CLITest < Minitest::Test
     stdout = StringIO.new
     stderr = StringIO.new
     attach_runner = AttachCaptureRunner.new
+    runner = ScriptCaptureRunner.new
+    runner.capture_output = <<~STATUS
+      app=signatures
+      slug=general-dev
+      running=yes
+      runtime=herdr
+      session=default
+      workspace_id=w7
+    STATUS
     cli = Tesseract::CLI.new(
       ["attach", "signatures", "general-dev", "--host", "tars"],
       stdout: stdout,
       stderr: stderr,
       root: File.expand_path("..", __dir__)
     )
+    cli.instance_variable_set(:@runner, runner)
     cli.instance_variable_set(:@interactive_runner, attach_runner)
 
     status = cli.run
@@ -799,6 +824,9 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_equal "signatures", attach_runner.profile.id
     assert_equal "general-dev", attach_runner.slug
+    assert_equal "w7", attach_runner.status.fetch("workspace_id")
+    assert_includes runner.scripts.fetch(0), "set -- 'worktree' 'status' 'general-dev'"
+    refute_includes runner.scripts.fetch(0), "exec ./bin/tesseract"
     assert_empty stdout.string
     assert_empty stderr.string
   end
@@ -851,12 +879,13 @@ class CLITest < Minitest::Test
     config = Tesseract::Config.new(File.expand_path("..", __dir__))
     runner = Tesseract::InteractiveRunner.new(config.host("tars"))
     attached = nil
-    runner.define_singleton_method(:worktree_status) do |_profile, _slug|
-      {"running" => "yes", "tmux_session" => "signatures_general_dev"}
-    end
     runner.define_singleton_method(:attach) { |session| attached = session }
 
-    runner.attach_worktree(config.app("signatures"), "general-dev")
+    runner.attach_worktree(
+      config.app("signatures"),
+      "general-dev",
+      status: {"running" => "yes", "tmux_session" => "signatures_general_dev"}
+    )
 
     assert_equal "signatures_general_dev", attached
   end
@@ -866,20 +895,21 @@ class CLITest < Minitest::Test
     runner = Tesseract::InteractiveRunner.new(config.host("tars"))
     focused = nil
     executed = nil
-    runner.define_singleton_method(:worktree_status) do |_profile, _slug|
-      {
-        "running" => "yes",
-        "runtime" => "herdr",
-        "session" => "default",
-        "workspace_id" => "w7"
-      }
-    end
     runner.define_singleton_method(:focus_herdr_workspace) do |workspace_id, session|
       focused = [workspace_id, session]
     end
     runner.define_singleton_method(:exec) { |*command| executed = command }
 
-    runner.attach_worktree(config.app("signatures"), "general-dev")
+    runner.attach_worktree(
+      config.app("signatures"),
+      "general-dev",
+      status: {
+        "running" => "yes",
+        "runtime" => "herdr",
+        "session" => "default",
+        "workspace_id" => "w7"
+      }
+    )
 
     assert_equal ["w7", "default"], focused
     assert_equal ["herdr", "--remote", "bot@tars"], executed

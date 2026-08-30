@@ -12,6 +12,11 @@ module Tesseract
     end
 
     def run(script)
+      @stdout.print(capture(script))
+      0
+    end
+
+    def capture(script)
       stdout, stderr, status = Open3.capture3(
         {
           "TESSERACT_REMOTE" => "1",
@@ -28,11 +33,10 @@ module Tesseract
         "-s",
         stdin_data: script
       )
-      @stdout.print(stdout)
       @stderr.print(stderr)
       raise Error, "remote command failed on #{@ssh_target}" unless status.success?
 
-      0
+      stdout
     end
   end
 end

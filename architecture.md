@@ -52,8 +52,9 @@ The architecture has five primitives:
 5. `tesseract`, the personal control CLI
 
 The important boundary is that infrastructure is shared by host, while app
-behavior is described by explicit app profiles. No single Rails app should be
-hardcoded into the architecture.
+behavior is selected by explicit app profiles and centrally versioned worktree
+drivers. App-specific drivers plug into a common lifecycle instead of being
+embedded in command dispatch or spread across app repositories.
 
 ## `tesseract`
 
@@ -123,7 +124,8 @@ Each Rails app should have its own explicit profile containing:
 - Process commands for web, workers, asset servers, and agents
 
 This is the mechanism for supporting multiple apps. Docovia is only one app
-profile, not a hardcoded namespace.
+profile. A profile can select generic Git management, a centrally stored
+app-specific driver, or a temporary repository-owned compatibility adapter.
 
 ## Source Code Topology
 

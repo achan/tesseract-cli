@@ -1,8 +1,17 @@
 id: signatures
 repo: git@github.com:achan/signatures.git
 main_path: /home/bot/repos/signatures
+worktree_root: /home/bot/repos/signatures-worktrees
+worktree_driver: signatures
 domain: signatures.achan.bot
+base_port: 6200
+port_count: 100
+database_prefix: signatures_dev_worktree
+pguser: bot
+url_template: https://{domain}:{port}
 session_driver: herdr
-database: false
+processes:
+  web: bin/dev
+  agent: codex --yolo
 dns_records:
   - "{domain}"

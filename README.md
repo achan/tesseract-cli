@@ -18,13 +18,12 @@ There are three layers:
   `local`.
 - App profiles in `config/apps/*.yml` describe app clones such as `docovia` and
   `flexday`.
-- Repo-local app adapters, usually `<app main path>/bin/tesseract`, own
-  app-specific worktree behavior.
+- Worktree drivers select generic Git behavior, centrally stored app behavior,
+  or a compatibility adapter from the app repository.
 
 The top-level CLI handles host/app discovery, SSH, shared services, DNS, certs,
-and dispatch. Worktree commands intentionally delegate into the app repository
-so each app can decide how to create databases, env files, terminal sessions,
-servers, workers, and asset processes.
+and dispatch. Central drivers are transmitted over SSH for each command, so the
+execution host does not need a Tesseract checkout or installation.
 
 ## Command Shape
 
@@ -219,9 +218,9 @@ flexday: /home/bot/repos/flexday/.env.local
 tesseract-web: /home/bot/repos/tesseract-web/.env.local
 ```
 
-Worktree creation links or copies from the app's shared env according to the
-repo-local adapter. Keep real env files out of git and set permissions to
-`0600`.
+Worktree creation links, copies, or generates environment files according to
+the selected worktree driver. Keep real env files out of git and set
+permissions to `0600`.
 
 ## DNS and Certificates
 
@@ -327,18 +326,10 @@ Signatures uses the default Herdr session and creates a `signatures/<slug>`
 workspace with a dev-server pane and a Codex pane. Other configured apps still
 use tmux. `stop` closes the app's runtime and processes but leaves the worktree,
 database, env files, and registry entry in place. `remove` is destructive: it
-stops the runtime, removes the git worktree, prunes registry metadata, and lets
-the repo-local adapter clean up app-specific state.
-
-Worktree commands run this shape on the selected host:
-
-```bash
-cd <app main path>
-exec ./bin/tesseract worktree <action> <slug> [branch]
-```
-
-That app-local handoff is why Docovia and Flexday can share the top-level
-control plane while keeping different runtime details.
+stops the runtime and removes the git worktree. Signatures lifecycle behavior
+is owned by the central `signatures` driver; compatibility profiles such as
+Docovia and Flexday may still delegate to an app-local adapter while they are
+migrated.
 
 ## Live Worktrees
 
@@ -356,7 +347,7 @@ tmux     docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bo
 herdr    default:signatures/general-dev 2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 
-`live` scans each configured app's main clone, asks the repo-local adapter for
+`live` scans each configured app's main clone, asks its selected driver for
 each worktree status, and prints running runtime targets with their URLs. RSS is
 the aggregate resident memory for processes whose current working directory is
 the worktree path or one of its subdirectories. Changelog URLs use the stable
@@ -409,8 +400,11 @@ domain: example.tars.achan.bot
 env_shared_path: /home/bot/repos/example/.env.local
 ```
 
-The app repository must provide an executable `bin/tesseract` when it wants to
-support worktree lifecycle commands through this control plane.
+Select a centrally stored driver with `worktree_driver`. Signatures uses the
+`signatures` driver under `libexec/tesseract/worktree-drivers`; the CLI sends
+that driver to the selected host when it runs. A `repository` profile is the
+compatibility option for apps that still provide an executable
+`bin/tesseract`.
 
 For an early-stage repository that only needs Git worktrees, configure the
 central Git-only driver instead:

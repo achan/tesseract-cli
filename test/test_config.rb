@@ -82,8 +82,10 @@ class ConfigTest < Minitest::Test
     assert_equal "git@github.com:getsprung/app", app.repo
     assert_equal "docovia.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/sprung-app", app.main_path
-    assert_nil app.worktree_root
-    assert_nil app.base_port
+    assert_equal "/home/bot/repos/sprung-worktrees", app.worktree_root
+    assert_equal "docovia", app.worktree_driver
+    assert_equal "herdr", app.session_driver
+    assert_equal 3100, app.base_port
     assert_equal ["docovia.tars.achan.bot", "*.docovia.tars.achan.bot"], app.dns_records
   end
 

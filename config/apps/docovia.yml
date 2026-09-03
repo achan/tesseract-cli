@@ -1,5 +1,14 @@
 id: docovia
 repo: git@github.com:getsprung/app
 main_path: /home/bot/repos/sprung-app
+worktree_root: /home/bot/repos/sprung-worktrees
+worktree_driver: docovia
+session_driver: herdr
 domain: docovia.tars.achan.bot
+base_port: 3100
+port_count: 100
+database_prefix: sprung_dev_worktree
 env_shared_path: /home/bot/repos/sprung-app/.env.local
+processes:
+  web: bundle exec rails server
+  agent: codex --yolo

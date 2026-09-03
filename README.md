@@ -89,7 +89,7 @@ Examples:
 bin/tesseract app list
 bin/tesseract live
 bin/tesseract worktree list
-bin/tesseract attach docovia_patientnow_integration --host tars
+bin/tesseract attach docovia patientnow-integration --host tars
 bin/tesseract worktree status docovia patientnow-integration
 bin/tesseract worktree start flexday calendar-refresh --host tars
 ```
@@ -309,6 +309,11 @@ bin/tesseract worktree start chrome-extensions manifest-v3 --host tars
 bin/tesseract worktree status chrome-extensions manifest-v3 --host tars
 ```
 
+Docovia worktrees run in the default Herdr session. Starting one creates a
+`doc/<slug>` workspace with a Code tab (Codex and terminal panes) and a Servers
+tab (Rails, jobs, and webpack panes). Existing legacy tmux sessions are reported
+by status and must be stopped before the worktree can start in Herdr.
+
 Mobile Dashboard uses the same Git-only lifecycle on `case`. The existing main
 clone lives at `/Users/bot/repos/mobile-dashboard`, and worktrees are created
 under `/Users/bot/repos/mobile-dashboard-worktrees`. Starting a worktree opens
@@ -369,7 +374,7 @@ Example output:
 
 ```text
 RUNTIME  TARGET                           RSS URL                                      CHANGELOG
-tmux     docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
+herdr    default:doc/patientnow-integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
 herdr    default:sig/general-dev        2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 

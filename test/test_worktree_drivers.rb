@@ -17,7 +17,9 @@ class WorktreeDriversTest < Minitest::Test
 
     assert registry.known?("repository")
     assert registry.known?("git")
+    assert registry.central?("docovia")
     assert registry.central?("signatures")
+    assert_equal %w[git herdr jq mise tmux], registry.fetch("docovia").required_commands
     assert_equal %w[createdb git herdr jq mise ss], registry.fetch("signatures").required_commands
     assert_raises(Tesseract::WorktreeDrivers::Error) { registry.fetch("missing") }
   end

@@ -409,7 +409,7 @@ class CLITest < Minitest::Test
     assert_empty stderr
   end
 
-  def test_worktree_create_dispatches_to_repo_tesseract
+  def test_worktree_create_dispatches_to_central_docovia_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -428,9 +428,10 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_empty service_runner.scripts
-    assert_includes script, "cd '/home/bot/repos/sprung-app'"
-    assert_includes script, "missing repo-local ./bin/tesseract in /home/bot/repos/sprung-app"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'create' 'demo' 'existing-branch'"
+    assert_includes script, "export TESSERACT_APP_ID='docovia'"
+    assert_includes script, "set -- 'worktree' 'create' 'demo' 'existing-branch'"
+    assert_includes script, 'repository_command worktree create "$slug" "$@"'
+    assert_includes script, 'herdr_command workspace create'
     refute_includes script, "docker exec tesseract-postgres"
     assert_empty stderr.string
   end
@@ -758,7 +759,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_worktree_remove_passes_force_to_repo_tesseract
+  def test_worktree_remove_passes_force_through_central_docovia_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -774,7 +775,9 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'remove' 'demo' '--force'"
+    assert_includes script, "set -- 'worktree' 'remove' 'demo' '--force'"
+    assert_includes script, 'repository_command worktree remove "$slug" "$@"'
+    assert_includes script, 'herdr_command workspace close "$WORKSPACE_ID"'
     assert_empty stderr.string
   end
 

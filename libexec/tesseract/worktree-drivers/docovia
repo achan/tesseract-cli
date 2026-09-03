@@ -1,0 +1,443 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_ID="${TESSERACT_APP_ID:-docovia}"
+APP_SHORTHAND="${TESSERACT_APP_SHORTHAND:-$APP_ID}"
+MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
+WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
+DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
+CERT_PATH="${TESSERACT_CERT_PATH:?missing TESSERACT_CERT_PATH}"
+KEY_PATH="${TESSERACT_KEY_PATH:?missing TESSERACT_KEY_PATH}"
+AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
+AGENT_NAME="${TESSERACT_AGENT_NAME:-codex}"
+HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
+S3_BUCKET_NAME_PUBLIC="${TESSERACT_S3_BUCKET_NAME_PUBLIC:-docovia-development-public}"
+
+usage() {
+  cat >&2 <<USAGE
+Usage:
+  tesseract worktree create ${APP_ID} <slug> [branch]
+  tesseract worktree start ${APP_ID} <slug>
+  tesseract worktree stop ${APP_ID} <slug>
+  tesseract worktree status ${APP_ID} <slug>
+  tesseract worktree remove ${APP_ID} <slug> [--force]
+USAGE
+  exit 1
+}
+
+validate_slug() {
+  case "$1" in
+    ""|*[!A-Za-z0-9._-]*)
+      echo "invalid worktree slug: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+sanitize_slug() {
+  printf "%s" "$1" | tr '-' '_' | tr -cd '[:alnum:]_'
+}
+
+worktree_path() {
+  printf "%s/%s" "$WORKTREE_ROOT" "$1"
+}
+
+legacy_session_name() {
+  printf "%s_%s" "$APP_ID" "$(sanitize_slug "$1")"
+}
+
+workspace_identity() {
+  printf "%s/%s" "$APP_SHORTHAND" "$1"
+}
+
+legacy_workspace_label() {
+  printf "%s/%s" "$APP_ID" "$1"
+}
+
+runtime_spec() {
+  path="$1"
+  specs=""
+  if [ -f "$path/.ruby-version" ]; then
+    version=$(cat "$path/.ruby-version")
+    specs="$specs ruby@${version#ruby-}"
+  fi
+  if [ -f "$path/.nvmrc" ]; then
+    version=$(cat "$path/.nvmrc")
+    specs="$specs node@${version#v}"
+  fi
+  printf "%s" "${specs# }"
+}
+
+run_runtime() {
+  path="$1"
+  shift
+  specs=$(runtime_spec "$path")
+  if [ -n "$specs" ] && command -v mise >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    (cd "$path" && mise exec $specs -- "$@")
+  else
+    (cd "$path" && "$@")
+  fi
+}
+
+runtime_prefix() {
+  path="$1"
+  specs=$(runtime_spec "$path")
+  if [ -n "$specs" ] && command -v mise >/dev/null 2>&1; then
+    printf "mise exec %s -- " "$specs"
+  fi
+}
+
+repository_command() {
+  if [ ! -x "$MAIN_PATH/bin/tesseract" ]; then
+    echo "missing repo-local $MAIN_PATH/bin/tesseract" >&2
+    exit 1
+  fi
+  (cd "$MAIN_PATH" && "$MAIN_PATH/bin/tesseract" "$@")
+}
+
+port_for_slug() {
+  env_file="$(worktree_path "$1")/.env.development.local"
+  if [ ! -f "$env_file" ]; then
+    echo "missing .env.development.local for $1" >&2
+    exit 1
+  fi
+  port=$(sed -n 's/^PORT=//p' "$env_file" | head -1 | tr -d '"' | tr -d "'")
+  case "$port" in
+    ""|*[!0-9]*)
+      echo "invalid PORT in $env_file" >&2
+      exit 1
+      ;;
+  esac
+  printf "%s" "$port"
+}
+
+webpack_port_for_slug() {
+  env_file="$(worktree_path "$1")/.env.development.local"
+  port=$(sed -n 's/^WEBPACKER_DEV_SERVER_PORT=//p' "$env_file" | head -1 | tr -d '"' | tr -d "'")
+  if [ -z "$port" ]; then
+    port=$(( $(port_for_slug "$1") + 1000 ))
+  fi
+  case "$port" in
+    ""|*[!0-9]*)
+      echo "invalid WEBPACKER_DEV_SERVER_PORT in $env_file" >&2
+      exit 1
+      ;;
+  esac
+  printf "%s" "$port"
+}
+
+ensure_env_setting() {
+  env_file="$1"
+  key="$2"
+  value="$3"
+  if grep -q "^${key}=" "$env_file"; then
+    sed -i.bak "s|^${key}=.*|${key}=${value}|" "$env_file"
+    rm -f "${env_file}.bak"
+  else
+    printf "%s=%s\n" "$key" "$value" >> "$env_file"
+  fi
+}
+
+ensure_startable() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  env_file="$path/.env.development.local"
+  [ -f "$env_file" ] || {
+    echo "missing .env.development.local for $slug" >&2
+    exit 1
+  }
+  ensure_env_setting "$env_file" WEBPACKER_DEV_SERVER_HOST 0.0.0.0
+  ensure_env_setting "$env_file" S3_BUCKET_NAME_PUBLIC "$S3_BUCKET_NAME_PUBLIC"
+  if [ ! -e "$path/app.crt" ] && [ -r "$CERT_PATH" ]; then
+    ln -s "$CERT_PATH" "$path/app.crt"
+  fi
+  if [ ! -e "$path/app.key" ] && [ -r "$KEY_PATH" ]; then
+    ln -s "$KEY_PATH" "$path/app.key"
+  fi
+  if [ ! -r "$path/app.crt" ] || [ ! -r "$path/app.key" ]; then
+    echo "missing Docovia certificate files for $slug" >&2
+    exit 1
+  fi
+  if [ -f "$path/package.json" ] && [ ! -x "$path/node_modules/.bin/webpack-dev-server" ]; then
+    if [ -f "$path/yarn.lock" ]; then
+      run_runtime "$path" bin/yarn install --frozen-lockfile
+    else
+      run_runtime "$path" bin/yarn install
+    fi
+    [ ! -x "$path/bin/build" ] || run_runtime "$path" bin/build
+  fi
+  run_runtime "$path" bundle check
+}
+
+herdr_command() {
+  HERDR_SESSION="$HERDR_SESSION_NAME" herdr "$@"
+}
+
+load_workspace() {
+  slug="$1"
+  identity=$(workspace_identity "$slug")
+  legacy_label=$(legacy_workspace_label "$slug")
+  workspace_json=$(herdr_command workspace list)
+  WORKSPACE_COUNT=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '[.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      )] | length')
+  if [ "$WORKSPACE_COUNT" -gt 1 ]; then
+    echo "multiple Herdr workspaces found for $identity" >&2
+    exit 1
+  fi
+  WORKSPACE_ID=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .workspace_id')
+  WORKSPACE_LABEL=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .label')
+}
+
+verify_workspace_path() {
+  workspace_id="$1"
+  path="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  pane_count=$(printf "%s" "$panes_json" | jq -r '.result.panes | length')
+  mismatch_count=$(printf "%s" "$panes_json" |
+    jq -r --arg path "$path" '[.result.panes[] | select(.cwd != $path)] | length')
+  if [ "$pane_count" -eq 0 ] || [ "$mismatch_count" -ne 0 ]; then
+    echo "Herdr workspace $workspace_id is not rooted at $path" >&2
+    exit 1
+  fi
+}
+
+refresh_workspace_metadata() {
+  workspace_id="$1"
+  url="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  printf "%s" "$panes_json" | jq -r '.result.panes[].pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata "$pane_id" \
+        --source tesseract --token "url=$url" >/dev/null
+    done
+  printf "%s" "$panes_json" | jq -r '.result.panes[] | select(.agent != null) | .pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata "$pane_id" \
+        --source tesseract --display-agent "$AGENT_NAME" >/dev/null
+    done
+}
+
+emit_herdr_runtime() {
+  slug="$1"
+  path="$2"
+  port="$3"
+  workspace_id="$4"
+  identity=$(workspace_identity "$slug")
+  echo "path=$path"
+  echo "port=$port"
+  echo "url=https://app.${DOMAIN}:${port}"
+  echo "running=yes"
+  echo "runtime=herdr"
+  echo "session=$HERDR_SESSION_NAME"
+  echo "workspace_id=$workspace_id"
+  echo "target=${HERDR_SESSION_NAME}:${identity}"
+}
+
+rollback_workspace() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -ne 0 ]; then
+    workspace_id="${CREATED_WORKSPACE_ID:-}"
+    [ -z "$workspace_id" ] || herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
+  fi
+  exit "$code"
+}
+
+start_worktree() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  if [ ! -d "$path" ] || ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "worktree is missing: $path" >&2
+    exit 1
+  fi
+
+  legacy_session=$(legacy_session_name "$slug")
+  identity=$(workspace_identity "$slug")
+  load_workspace "$slug"
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "legacy tmux session is still running: $legacy_session; stop it before starting Herdr" >&2
+    exit 1
+  fi
+
+  port=$(port_for_slug "$slug")
+  app_url="https://app.${DOMAIN}:${port}"
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    if [ "$WORKSPACE_LABEL" != "$identity" ]; then
+      herdr_command workspace rename "$WORKSPACE_ID" "$identity" >/dev/null
+    fi
+    refresh_workspace_metadata "$WORKSPACE_ID" "$app_url"
+    echo "workspace already running: $identity"
+    emit_herdr_runtime "$slug" "$path" "$port" "$WORKSPACE_ID"
+    return
+  fi
+
+  ensure_startable "$slug"
+  webpack_port=$(webpack_port_for_slug "$slug")
+  prefix=$(runtime_prefix "$path")
+  printf -v rails_command \
+    'WEBPACKER_DEV_SERVER_HOST=0.0.0.0 WEBPACKER_DEV_SERVER_PORT=%q WEBPACKER_DEV_SERVER_PUBLIC=%q %sbundle exec rails s -p %q -b %q' \
+    "$webpack_port" "localhost:$webpack_port" "$prefix" "$port" \
+    'ssl://0.0.0.0?key=app.key&cert=app.crt'
+  printf -v jobs_command \
+    'max_rss_mb=${DELAYED_JOB_MAX_RSS_MB:-1024}; while true; do memory_restart=false; %sbundle exec rake jobs:work & worker_pid=$!; while kill -0 "$worker_pid" 2>/dev/null; do rss_kb=$(ps -o rss= -p "$worker_pid" 2>/dev/null | tr -d " "); rss_mb=$(( ${rss_kb:-0} / 1024 )); if [ "$max_rss_mb" -gt 0 ] && [ "$rss_mb" -ge "$max_rss_mb" ]; then echo "jobs:work pid $worker_pid rss ${rss_mb}MB exceeded ${max_rss_mb}MB; restarting"; memory_restart=true; kill -TERM "$worker_pid" 2>/dev/null || true; sleep 10; kill -KILL "$worker_pid" 2>/dev/null || true; break; fi; sleep 30; done; wait "$worker_pid"; status=$?; if [ "$memory_restart" = false ] && { [ "$status" -eq 130 ] || [ "$status" -eq 143 ]; }; then exit "$status"; fi; echo "jobs:work exited with status $status; restarting in 2s"; sleep 2; done' \
+    "$prefix"
+  printf -v webpack_command \
+    'WEBPACKER_DEV_SERVER_HOST=0.0.0.0 WEBPACKER_DEV_SERVER_PORT=%q WEBPACKER_DEV_SERVER_PUBLIC=%q %sbin/webpack-dev-server' \
+    "$webpack_port" "localhost:$webpack_port" "$prefix"
+  printf -v agent_command 'TESSERACT_LIVE_ACTIVITY_APP=%q %s' "$APP_ID" "$AGENT_COMMAND"
+
+  CREATED_WORKSPACE_ID=""
+  trap rollback_workspace EXIT
+  workspace_create_json=$(herdr_command workspace create \
+    --cwd "$path" --label "$identity" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" --no-focus)
+  CREATED_WORKSPACE_ID=$(printf "%s" "$workspace_create_json" | jq -er '.result.workspace.workspace_id')
+  code_tab_id=$(printf "%s" "$workspace_create_json" | jq -er '.result.tab.tab_id')
+  codex_pane_id=$(printf "%s" "$workspace_create_json" | jq -er '.result.root_pane.pane_id')
+  herdr_command tab rename "$code_tab_id" Code >/dev/null
+  terminal_json=$(herdr_command pane split \
+    --pane "$codex_pane_id" --direction right --ratio 0.5 --cwd "$path" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" --no-focus)
+  terminal_pane_id=$(printf "%s" "$terminal_json" | jq -er '.result.pane.pane_id')
+  herdr_command pane rename "$codex_pane_id" Codex >/dev/null
+  herdr_command pane rename "$terminal_pane_id" Terminal >/dev/null
+
+  servers_json=$(herdr_command tab create \
+    --workspace "$CREATED_WORKSPACE_ID" --cwd "$path" --label Servers \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" --no-focus)
+  rails_pane_id=$(printf "%s" "$servers_json" | jq -er '.result.root_pane.pane_id')
+  jobs_json=$(herdr_command pane split \
+    --pane "$rails_pane_id" --direction down --ratio 0.67 --cwd "$path" --no-focus)
+  jobs_pane_id=$(printf "%s" "$jobs_json" | jq -er '.result.pane.pane_id')
+  webpack_json=$(herdr_command pane split \
+    --pane "$jobs_pane_id" --direction right --ratio 0.5 --cwd "$path" --no-focus)
+  webpack_pane_id=$(printf "%s" "$webpack_json" | jq -er '.result.pane.pane_id')
+  herdr_command pane rename "$rails_pane_id" Rails >/dev/null
+  herdr_command pane rename "$jobs_pane_id" Jobs >/dev/null
+  herdr_command pane rename "$webpack_pane_id" Webpack >/dev/null
+
+  herdr_command pane run "$codex_pane_id" "$agent_command" >/dev/null
+  herdr_command pane run "$rails_pane_id" "$rails_command" >/dev/null
+  herdr_command pane run "$jobs_pane_id" "$jobs_command" >/dev/null
+  herdr_command pane run "$webpack_pane_id" "$webpack_command" >/dev/null
+  for pane_id in "$codex_pane_id" "$terminal_pane_id" "$rails_pane_id" "$jobs_pane_id" "$webpack_pane_id"; do
+    if [ "$pane_id" = "$codex_pane_id" ]; then
+      herdr_command pane report-metadata "$pane_id" --source tesseract \
+        --display-agent "$AGENT_NAME" --token "url=$app_url" >/dev/null
+    else
+      herdr_command pane report-metadata "$pane_id" --source tesseract \
+        --token "url=$app_url" >/dev/null
+    fi
+  done
+  trap - EXIT
+
+  echo "started $identity"
+  emit_herdr_runtime "$slug" "$path" "$port" "$CREATED_WORKSPACE_ID"
+}
+
+stop_worktree() {
+  slug="$1"
+  identity=$(workspace_identity "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+  stopped=false
+  load_workspace "$slug"
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    herdr_command workspace close "$WORKSPACE_ID" >/dev/null
+    echo "stopped $identity"
+    stopped=true
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    tmux kill-session -t "=$legacy_session"
+    echo "stopped legacy tmux session $legacy_session"
+    stopped=true
+  fi
+  [ "$stopped" = true ] || echo "not running: $identity"
+}
+
+status_worktree() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  repository_command worktree status "$slug" |
+    sed -e '/^running=/d' -e '/^session=/d' -e '/^runtime=/d' \
+      -e '/^target=/d' -e '/^tmux_session=/d' -e '/^legacy_runtime=/d'
+
+  load_workspace "$slug"
+  legacy_session=$(legacy_session_name "$slug")
+  legacy_running=false
+  tmux has-session -t "=$legacy_session" 2>/dev/null && legacy_running=true
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && [ "$legacy_running" = true ]; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    echo "running=yes"
+    echo "runtime=herdr"
+    echo "session=$HERDR_SESSION_NAME"
+    echo "workspace_id=$WORKSPACE_ID"
+    echo "target=${HERDR_SESSION_NAME}:$(workspace_identity "$slug")"
+  elif [ "$legacy_running" = true ]; then
+    echo "running=yes"
+    echo "runtime=tmux"
+    echo "tmux_session=$legacy_session"
+    echo "target=$legacy_session"
+    echo "legacy_runtime=yes"
+  else
+    echo "running=no"
+    echo "runtime=none"
+    echo "target=-"
+  fi
+}
+
+remove_worktree() {
+  slug="$1"
+  shift
+  stop_worktree "$slug"
+  repository_command worktree remove "$slug" "$@"
+}
+
+[ "${1:-}" = "worktree" ] || usage
+action="${2:-}"
+slug="${3:-}"
+shift 3 || usage
+validate_slug "$slug"
+
+case "$action" in
+  create)
+    [ "$#" -le 1 ] || usage
+    repository_command worktree create "$slug" "$@"
+    ;;
+  start|stop|status)
+    [ "$#" -eq 0 ] || usage
+    "${action}_worktree" "$slug"
+    ;;
+  remove)
+    [ "$#" -le 1 ] || usage
+    [ "$#" -eq 0 ] || [ "$1" = "--force" ] || usage
+    remove_worktree "$slug" "$@"
+    ;;
+  *) usage ;;
+esac

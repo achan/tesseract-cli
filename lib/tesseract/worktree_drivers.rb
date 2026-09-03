@@ -7,6 +7,7 @@ module Tesseract
     class Registry
       BUILTIN_DRIVERS = %w[repository git].freeze
       REQUIRED_COMMANDS = {
+        "docovia" => %w[git herdr jq mise tmux],
         "signatures" => %w[createdb git herdr jq mise ss]
       }.freeze
 

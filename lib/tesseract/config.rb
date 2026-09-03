@@ -21,19 +21,17 @@ module Tesseract
     end
 
     def app(id, host: nil)
-      path = File.join(@root, "config", "apps", "#{id}.yml")
-      raise Error, "unknown app: #{id}" unless File.file?(path)
+      data = app_data_by_name[id]
+      raise Error, "unknown app: #{id}" unless data
 
-      data = load_yaml(path)
       data = host.rewrite_app_profile(data) if host
-      AppProfile.new(with_app_shorthand(data))
+      AppProfile.new(with_app_shorthand(data).merge("requested_name" => id))
     end
 
     def apps(host: nil)
-      Dir.glob(File.join(@root, "config", "apps", "*.yml")).sort.map do |path|
-        data = load_yaml(path)
+      canonical_app_data.map do |data|
         data = host.rewrite_app_profile(data) if host
-        AppProfile.new(with_app_shorthand(data))
+        AppProfile.new(with_app_shorthand(data).merge("requested_name" => data.fetch("id")))
       end
     end
 
@@ -48,6 +46,36 @@ module Tesseract
     end
 
     private
+
+    def canonical_app_data
+      @canonical_app_data ||= begin
+        profiles = Dir.glob(File.join(@root, "config", "apps", "*.yml")).sort.map do |path|
+          load_yaml(path)
+        end
+        owners = {}
+        profiles.each do |data|
+          id = data.fetch("id")
+          ([id] + Array(data.fetch("app_aliases", []))).each do |name|
+            unless name.to_s.match?(/\A[a-z][a-z0-9_-]*\z/)
+              raise Error, "#{id} profile has invalid app name or alias: #{name}"
+            end
+            if owners.key?(name)
+              raise Error, "app name or alias #{name} is used by both #{owners.fetch(name)} and #{id}"
+            end
+            owners[name] = id
+          end
+        end
+        profiles
+      end
+    end
+
+    def app_data_by_name
+      @app_data_by_name ||= canonical_app_data.each_with_object({}) do |data, index|
+        ([data.fetch("id")] + Array(data.fetch("app_aliases", []))).each do |name|
+          index[name] = data
+        end
+      end
+    end
 
     def app_shorthands
       @app_shorthands ||= load_yaml(File.join(@root, "config", "app-shorthands.yml"))
@@ -194,13 +222,16 @@ module Tesseract
   end
 
   class AppProfile
-    attr_reader :id, :shorthand, :repo, :main_path, :worktree_root, :domain, :base_port,
+    attr_reader :id, :requested_name, :app_aliases, :shorthand, :repo, :main_path,
+      :worktree_root, :domain, :domain_aliases, :runtime_domain, :public_s3_bucket, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
       :setup_commands, :env_overrides, :url_template, :dns_zone,
       :worktree_driver, :session_driver, :default_branch, :fetch_on_create
 
     def initialize(data)
       @id = required(data, "id")
+      @requested_name = data.fetch("requested_name", @id)
+      @app_aliases = Array(data.fetch("app_aliases", []))
       @shorthand = data.fetch("shorthand", @id)
       unless @shorthand.match?(/\A[a-z][a-z0-9_-]*\z/)
         raise Config::Error, "#{@id} profile has invalid shorthand: #{@shorthand}"
@@ -208,6 +239,9 @@ module Tesseract
       @repo = required(data, "repo")
       @main_path = required(data, "main_path")
       @domain = required(data, "domain")
+      @domain_aliases = Array(data.fetch("domain_aliases", []))
+      @runtime_domain = data.fetch("runtime_domains", {}).fetch(@requested_name, @domain)
+      @public_s3_bucket = data.fetch("public_s3_buckets", {})[@requested_name]
       @worktree_root = data["worktree_root"]
       @worktree_driver = data.fetch("worktree_driver", "repository")
       unless WorktreeDrivers::Registry.known_id?(@worktree_driver)
@@ -254,7 +288,13 @@ module Tesseract
     end
 
     def dns_records
-      @dns_records.map { |record| record.gsub("{domain}", domain) }
+      domains.flat_map do |configured_domain|
+        @dns_records.map { |record| record.gsub("{domain}", configured_domain) }
+      end.uniq
+    end
+
+    def certificate_domains
+      domains.flat_map { |configured_domain| [configured_domain, "*.#{configured_domain}"] }
     end
 
     def cert_path(host)
@@ -282,6 +322,10 @@ module Tesseract
     end
 
     private
+
+    def domains
+      [domain, *domain_aliases]
+    end
 
     def required(data, key)
       data.fetch(key) { raise Config::Error, "app profile is missing #{key}" }

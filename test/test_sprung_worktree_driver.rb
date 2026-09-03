@@ -4,22 +4,24 @@ require "json"
 require "open3"
 require "tmpdir"
 
-class DocoviaWorktreeDriverTest < Minitest::Test
-  DRIVER = File.expand_path("../libexec/tesseract/worktree-drivers/docovia", __dir__)
+class SprungWorktreeDriverTest < Minitest::Test
+  DRIVER = File.expand_path("../libexec/tesseract/worktree-drivers/sprung", __dir__)
 
-  def test_start_creates_docovia_herdr_layout_and_processes
+  def test_start_creates_sprung_herdr_layout_and_processes
     with_runtime_fixture do |fixture|
       stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
 
       assert status.success?, stderr
-      assert_includes stdout, "started doc/demo"
+      assert_includes stdout, "started spr/demo"
       assert_includes stdout, "runtime=herdr"
       assert_includes stdout, "session=default"
       assert_includes stdout, "workspace_id=w7"
-      assert_includes stdout, "target=default:doc/demo"
+      assert_includes stdout, "target=default:spr/demo"
+      assert_includes stdout, "url=https://app.docovia.example.test:3110"
+      assert_includes stdout, "url_alias[smilesnap.example.test]=https://app.smilesnap.example.test:3110"
 
       log = File.read(fixture.fetch(:herdr_log))
-      assert_includes log, "workspace create --cwd #{fixture.fetch(:worktree)} --label doc/demo"
+      assert_includes log, "workspace create --cwd #{fixture.fetch(:worktree)} --label spr/demo"
       assert_includes log, "tab rename w7:t1 Code"
       assert_includes log, "pane rename w7:p1 Codex"
       assert_includes log, "pane rename w7:p2 Terminal"
@@ -30,7 +32,79 @@ class DocoviaWorktreeDriverTest < Minitest::Test
       assert_includes log, "bundle exec rails s -p 3110"
       assert_includes log, "bundle exec rake jobs:work"
       assert_includes log, "bin/webpack-dev-server"
-      assert_includes log, "pane run w7:p1 TESSERACT_LIVE_ACTIVITY_APP=docovia codex --yolo"
+      assert_includes log, "pane run w7:p1 TESSERACT_LIVE_ACTIVITY_APP=sprung codex --yolo"
+
+      env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_DOMAIN=docovia.example.test\n"
+      assert_includes env, "DASHBOARD_DOMAIN=app.docovia.example.test\n"
+      assert_includes env, "WEBSITE_URL=https://app.docovia.example.test:3110\n"
+      assert_includes env, "API_URL=https://api.docovia.example.test:3110\n"
+      assert_includes env, "S3_BUCKET_NAME_PUBLIC=docovia-development-public\n"
+      assert_includes env, "PORT=3110\n"
+      assert_includes env, "DATABASE_URL=postgres://bot:dev@localhost/sprung_demo\n"
+      assert_includes env, "REDIS_URL=redis://localhost:6379/42\n"
+      assert_includes env, "CUSTOM_VALUE=preserved\n"
+    end
+  end
+
+  def test_smilesnap_start_writes_smilesnap_runtime_configuration
+    with_runtime_fixture do |fixture|
+      environment = fixture.fetch(:environment).merge(
+        "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
+        "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+      )
+
+      _stdout, stderr, status = Open3.capture3(environment, "bash", DRIVER, "worktree", "start", "demo")
+
+      assert status.success?, stderr
+      env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_DOMAIN=smilesnap.example.test\n"
+      assert_includes env, "DASHBOARD_DOMAIN=app.smilesnap.example.test\n"
+      assert_includes env, "WEBSITE_URL=https://app.smilesnap.example.test:3110\n"
+      assert_includes env, "API_URL=https://api.smilesnap.example.test:3110\n"
+      assert_includes env, "S3_BUCKET_NAME_PUBLIC=smilesnap-development-public\n"
+    end
+  end
+
+  def test_stopped_worktree_can_switch_runtime_configuration
+    with_runtime_fixture do |fixture|
+      _stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
+      assert status.success?, stderr
+
+      smile_environment = fixture.fetch(:environment).merge(
+        "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
+        "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+      )
+      _stdout, stderr, status = Open3.capture3(smile_environment, "bash", DRIVER, "worktree", "start", "demo")
+
+      assert status.success?, stderr
+      env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_DOMAIN=smilesnap.example.test\n"
+      assert_includes env, "S3_BUCKET_NAME_PUBLIC=smilesnap-development-public\n"
+      assert_equal 1, env.scan(/^APP_DOMAIN=/).length
+      assert_equal 1, env.scan(/^S3_BUCKET_NAME_PUBLIC=/).length
+    end
+  end
+
+  def test_running_worktree_rejects_runtime_switch_without_modifying_env
+    with_runtime_fixture(workspace: true) do |fixture|
+      env_file = File.join(fixture.fetch(:worktree), ".env.development.local")
+      before = File.read(env_file)
+      smile_environment = fixture.fetch(:environment).merge(
+        "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
+        "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+      )
+
+      _stdout, stderr, status = Open3.capture3(smile_environment, "bash", DRIVER, "worktree", "start", "demo")
+
+      refute status.success?
+      assert_includes stderr, "already running with a different runtime configuration"
+      assert_includes stderr, "tesseract worktree stop smilesnap demo"
+      assert_includes stderr, "tesseract worktree start smilesnap demo"
+      assert_equal before, File.read(env_file)
     end
   end
 
@@ -42,11 +116,25 @@ class DocoviaWorktreeDriverTest < Minitest::Test
       assert_includes stdout, "registered=yes"
       assert_includes stdout, "setup=complete"
       assert_includes stdout, "seed=complete"
+      assert_includes stdout, "app=sprung"
+      refute_includes stdout, "app=docovia"
+      assert_includes stdout, "url=https://app.docovia.example.test:3110"
+      assert_includes stdout, "url_alias[smilesnap.example.test]=https://app.smilesnap.example.test:3110"
       assert_includes stdout, "runtime=herdr"
       assert_includes stdout, "workspace_id=w7"
-      assert_includes stdout, "target=default:doc/demo"
+      assert_includes stdout, "target=default:spr/demo"
       assert_equal 1, stdout.scan(/^running=/).length
       assert_equal 1, stdout.scan(/^session=/).length
+    end
+  end
+
+  def test_start_renames_legacy_doc_workspace_to_sprung_identity
+    with_runtime_fixture(workspace: true) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "start", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "workspace already running: spr/demo"
+      assert_includes File.read(fixture.fetch(:herdr_log)), "workspace rename w7 spr/demo"
     end
   end
 
@@ -58,6 +146,18 @@ class DocoviaWorktreeDriverTest < Minitest::Test
       assert_includes stdout, "runtime=tmux"
       assert_includes stdout, "tmux_session=docovia_demo"
       assert_includes stdout, "legacy_runtime=yes"
+    end
+  end
+
+  def test_stop_closes_legacy_doc_workspace_and_docovia_tmux_session
+    with_runtime_fixture(workspace: true, tmux_running: true) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "stop", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "stopped spr/demo"
+      assert_includes stdout, "stopped legacy tmux session docovia_demo"
+      assert_includes File.read(fixture.fetch(:herdr_log)), "workspace close w7"
+      assert_includes File.read(fixture.fetch(:tmux_log)), "kill-session -t =docovia_demo"
     end
   end
 
@@ -92,7 +192,18 @@ class DocoviaWorktreeDriverTest < Minitest::Test
       FileUtils.mkdir_p([File.join(main, "bin"), worktree, fake_bin])
       File.write(
         File.join(worktree, ".env.development.local"),
-        "PORT=3110\nWEBPACKER_DEV_SERVER_PORT=4110\n"
+        <<~ENV
+          PORT=3110
+          WEBPACKER_DEV_SERVER_PORT=4110
+          APP_DOMAIN=docovia.example.test
+          DASHBOARD_DOMAIN=app.docovia.example.test
+          WEBSITE_URL=https://app.docovia.example.test:3110
+          API_URL=https://api.docovia.example.test:3110
+          S3_BUCKET_NAME_PUBLIC=docovia-development-public
+          DATABASE_URL=postgres://bot:dev@localhost/sprung_demo
+          REDIS_URL=redis://localhost:6379/42
+          CUSTOM_VALUE=preserved
+        ENV
       )
       FileUtils.touch([
         File.join(worktree, "app.crt"),
@@ -111,11 +222,15 @@ class DocoviaWorktreeDriverTest < Minitest::Test
 
       environment = {
         "PATH" => "#{fake_bin}:#{ENV.fetch("PATH")}",
-        "TESSERACT_APP_ID" => "docovia",
-        "TESSERACT_APP_SHORTHAND" => "doc",
+        "TESSERACT_APP_ID" => "sprung",
+        "TESSERACT_REQUESTED_APP_NAME" => "sprung",
+        "TESSERACT_APP_SHORTHAND" => "spr",
         "TESSERACT_MAIN_PATH" => main,
         "TESSERACT_WORKTREE_ROOT" => worktree_root,
         "TESSERACT_DOMAIN" => "docovia.example.test",
+        "TESSERACT_DOMAIN_ALIASES" => "smilesnap.example.test",
+        "TESSERACT_RUNTIME_DOMAIN" => "docovia.example.test",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "docovia-development-public",
         "TESSERACT_CERT_PATH" => File.join(worktree, "app.crt"),
         "TESSERACT_KEY_PATH" => File.join(worktree, "app.key"),
         "TESSERACT_AGENT_COMMAND" => "codex --yolo",
@@ -133,7 +248,8 @@ class DocoviaWorktreeDriverTest < Minitest::Test
         environment: environment,
         worktree: worktree,
         repository_log: repository_log,
-        herdr_log: herdr_log
+        herdr_log: herdr_log,
+        tmux_log: tmux_log
       )
     end
   end

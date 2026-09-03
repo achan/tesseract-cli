@@ -16,7 +16,7 @@ There are three layers:
 
 - Host profiles in `config/hosts/*.yml` describe machines such as `tars` and
   `local`.
-- App profiles in `config/apps/*.yml` describe app clones such as `docovia` and
+- App profiles in `config/apps/*.yml` describe app clones such as `sprung` and
   `flexday`.
 - Worktree drivers select generic Git behavior, centrally stored app behavior,
   or a compatibility adapter from the app repository.
@@ -89,8 +89,8 @@ Examples:
 bin/tesseract app list
 bin/tesseract live
 bin/tesseract worktree list
-bin/tesseract attach docovia patientnow-integration --host tars
-bin/tesseract worktree status docovia patientnow-integration
+bin/tesseract attach sprung patientnow-integration --host tars
+bin/tesseract worktree status sprung patientnow-integration
 bin/tesseract worktree start flexday calendar-refresh --host tars
 ```
 
@@ -114,8 +114,8 @@ If the token is assigned in `~/.zshrc` without `export`, run DNS and cert
 commands through zsh:
 
 ```bash
-zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync docovia --host tars'
-zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract cert issue docovia --host tars'
+zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract dns sync sprung --host tars'
+zsh -lc 'source ~/.zshrc; export CLOUDFLARE_API_TOKEN; bin/tesseract cert issue sprung --host tars'
 ```
 
 ## Host Bootstrap
@@ -178,8 +178,8 @@ bin/tesseract app list
 Clone and prepare an app on the selected host:
 
 ```bash
-bin/tesseract app clone docovia --host tars
-bin/tesseract app setup docovia --host tars
+bin/tesseract app clone sprung --host tars
+bin/tesseract app setup sprung --host tars
 
 bin/tesseract app clone flexday --host tars
 bin/tesseract app setup flexday --host tars
@@ -198,14 +198,14 @@ runtime activation is required.
 Check an app profile and remote clone:
 
 ```bash
-bin/tesseract app doctor docovia --host tars
+bin/tesseract app doctor sprung --host tars
 ```
 
 Pull the selected app's main repo from `origin main`. This refuses to run when
 the main repo has local changes:
 
 ```bash
-bin/tesseract app pull docovia --host tars
+bin/tesseract app pull sprung --host tars
 ```
 
 ## Shared App Environment
@@ -213,7 +213,7 @@ bin/tesseract app pull docovia --host tars
 Each app profile points at a shared env file on the host:
 
 ```text
-docovia: /home/bot/repos/sprung-app/.env.local
+sprung: /home/bot/repos/sprung-app/.env.local
 flexday: /home/bot/repos/flexday/.env.local
 tesseract-web: /home/bot/repos/tesseract-web/.env.local
 ```
@@ -227,8 +227,8 @@ permissions to `0600`.
 Sync app DNS records to the host's Tailscale IP:
 
 ```bash
-bin/tesseract dns sync docovia --host tars
-bin/tesseract dns doctor docovia --host tars
+bin/tesseract dns sync sprung --host tars
+bin/tesseract dns doctor sprung --host tars
 
 bin/tesseract dns sync flexday --host tars
 bin/tesseract dns doctor flexday --host tars
@@ -237,12 +237,14 @@ bin/tesseract dns doctor flexday --host tars
 Issue or inspect app certificates:
 
 ```bash
-bin/tesseract cert issue docovia --host tars
-bin/tesseract cert doctor docovia --host tars
-bin/tesseract cert renew docovia --host tars
+bin/tesseract cert issue sprung --host tars
+bin/tesseract cert doctor sprung --host tars
+bin/tesseract cert renew sprung --host tars
 ```
 
-Certificates are installed under the host cert directory. For Docovia on `tars`:
+Sprung uses one certificate covering the base and wildcard names for both
+`docovia.tars.achan.bot` and `smilesnap.tars.achan.bot`. It remains installed
+under the existing Docovia-derived paths so existing worktree symlinks remain valid:
 
 ```text
 /home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.crt
@@ -255,7 +257,7 @@ List worktrees with their runtime, attach target, and URL:
 
 ```bash
 bin/tesseract worktree list --host tars
-bin/tesseract worktree list docovia --host tars
+bin/tesseract worktree list sprung --host tars
 ```
 
 Attach to a worktree by app and slug, regardless of its runtime:
@@ -273,22 +275,22 @@ bin/tesseract attach docovia_smoke_test --host tars
 Create a worktree from the app repository default branch:
 
 ```bash
-bin/tesseract worktree create docovia smoke-test --host tars
+bin/tesseract worktree create sprung smoke-test --host tars
 ```
 
 Create a worktree from a specific branch:
 
 ```bash
-bin/tesseract worktree create docovia patientnow-integration origin/feature/patientnow-integration --host tars
+bin/tesseract worktree create sprung patientnow-integration origin/feature/patientnow-integration --host tars
 ```
 
 Start, inspect, stop, and remove the worktree:
 
 ```bash
-bin/tesseract worktree start docovia smoke-test --host tars
-bin/tesseract worktree status docovia smoke-test --host tars
-bin/tesseract worktree stop docovia smoke-test --host tars
-bin/tesseract worktree remove docovia smoke-test --host tars
+bin/tesseract worktree start sprung smoke-test --host tars
+bin/tesseract worktree status sprung smoke-test --host tars
+bin/tesseract worktree stop sprung smoke-test --host tars
+bin/tesseract worktree remove sprung smoke-test --host tars
 ```
 
 Tesseract web worktrees use the same lifecycle with the `tesseract-web` app id:
@@ -309,10 +311,22 @@ bin/tesseract worktree start chrome-extensions manifest-v3 --host tars
 bin/tesseract worktree status chrome-extensions manifest-v3 --host tars
 ```
 
-Docovia worktrees run in the default Herdr session. Starting one creates a
-`doc/<slug>` workspace with a Code tab (Codex and terminal panes) and a Servers
-tab (Rails, jobs, and webpack panes). Existing legacy tmux sessions are reported
+Sprung worktrees run in the default Herdr session. Starting one creates a
+`spr/<slug>` workspace with a Code tab (Codex and terminal panes) and a Servers
+tab (Rails, jobs, and webpack panes). Existing `doc/<slug>` workspaces are
+renamed when started, while legacy `docovia_<slug>` tmux sessions are reported
 by status and must be stopped before the worktree can start in Herdr.
+
+`sprung` is the canonical CLI app id and the only one shown by `app list`.
+`docovia` and `smilesnap` remain accepted aliases; they resolve to the same
+repository, worktree paths, databases, ports, certificate, and runtime state.
+The name used for `worktree start` selects the generated application environment:
+`sprung` and `docovia` write the Docovia domains and
+`docovia-development-public`, while `smilesnap` writes the SmileSnap domains and
+`smilesnap-development-public`. Switching requires stopping the worktree first;
+start refuses to rewrite these settings while its runtime is active.
+Status and Herdr metadata use the Docovia URL as primary and status also reports
+the SmileSnap URL as `url_alias[smilesnap.tars.achan.bot]`.
 
 Mobile Dashboard uses the same Git-only lifecycle on `case`. The existing main
 clone lives at `/Users/bot/repos/mobile-dashboard`, and worktrees are created
@@ -353,14 +367,14 @@ Other configured apps still use tmux. `stop` closes the app's runtime and
 processes but leaves the worktree, database, env files, and registry entry in
 place. `remove` is destructive: it stops the runtime and removes the git
 worktree. Signatures lifecycle behavior is owned by the central `signatures`
-driver; compatibility profiles such as Docovia and Flexday may still delegate
-to an app-local adapter while they are migrated.
+driver. Sprung uses the central `sprung` driver around its app-local lifecycle
+adapter; compatibility profiles such as Flexday still delegate directly to an
+app-local adapter.
 
 `config/app-shorthands.yml` defines display names for Signatures (`sig`),
-Docovia (`doc`), Smilesnap (`ss`), Flexday (`f`), Chrome Extensions (`cex`),
+Sprung (`spr`), Docovia (`doc`), Smilesnap (`ss`), Flexday (`f`), Chrome Extensions (`cex`),
 Tesseract Web (`tess`), and Mobile Dashboard (`md`). Only the central
-Signatures driver consumes these names for Herdr today; the other definitions
-are ready for later driver migrations.
+Signatures and Sprung drivers consume their canonical names for Herdr today.
 
 ## Live Worktrees
 
@@ -374,7 +388,7 @@ Example output:
 
 ```text
 RUNTIME  TARGET                           RSS URL                                      CHANGELOG
-herdr    default:doc/patientnow-integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
+herdr    default:spr/patientnow-integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
 herdr    default:sig/general-dev        2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 
@@ -390,11 +404,18 @@ deterministic path-derived placeholder otherwise. A placeholder can return
 
 Open the URL reported by `worktree status` or `live`.
 
-Docovia URLs usually look like:
+Sprung's primary Docovia URLs usually look like:
 
 ```text
 https://app.docovia.tars.achan.bot:3101
 https://api.docovia.tars.achan.bot:3101
+```
+
+The same worktree is also available through SmileSnap:
+
+```text
+https://app.smilesnap.tars.achan.bot:3101
+https://api.smilesnap.tars.achan.bot:3101
 ```
 
 Flexday URLs usually look like:
@@ -412,7 +433,7 @@ https://tesseract-web.tars.achan.bot:6101
 If the browser reports `ERR_NAME_NOT_RESOLVED`, verify DNS first:
 
 ```bash
-bin/tesseract dns doctor docovia --host tars
+bin/tesseract dns doctor sprung --host tars
 ```
 
 Some local resolvers cache earlier NXDOMAIN responses. Use a resolver such as
@@ -476,17 +497,17 @@ Use these only when intentionally deleting remote runtime state.
 Remove a worktree:
 
 ```bash
-bin/tesseract worktree stop docovia smoke-test --host tars || true
-bin/tesseract worktree remove docovia smoke-test --host tars || true
+bin/tesseract worktree stop sprung smoke-test --host tars || true
+bin/tesseract worktree remove sprung smoke-test --host tars || true
 ```
 
-Remove the Docovia main clone and tesseract metadata on `tars`:
+Remove the Sprung main clone and tesseract metadata on `tars`:
 
 ```bash
 ssh bot@tars 'rm -rf \
   /home/bot/repos/sprung-app \
   /home/bot/repos/sprung-worktrees \
-  /home/bot/.local/share/tesseract/registry/docovia.tsv \
+  /home/bot/.local/share/tesseract/registry/sprung.tsv \
   /home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.crt \
   /home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.key \
   /home/bot/.acme.sh/docovia.tars.achan.bot_ecc'

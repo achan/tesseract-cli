@@ -1017,7 +1017,7 @@ EOF
       runner.run(<<~SH)
         set -u
         echo "domain=#{profile.domain}"
-        echo "wildcard=*.#{profile.domain}"
+        #{profile.certificate_domains.map { |certificate_domain| "echo certificate_domain=#{Shell.escape(certificate_domain)}" }.join("\n")}
         echo "cert_path=#{profile.cert_path(host)}"
         echo "key_path=#{profile.key_path(host)}"
         [ -x "$HOME/.acme.sh/acme.sh" ] && echo "acme_sh=ok" || echo "acme_sh=missing"
@@ -1528,13 +1528,16 @@ EOF
       raise Config::Error, "CLOUDFLARE_API_TOKEN is required for cert #{mode}" if token.to_s.empty?
 
       domain = profile.domain
+      certificate_domains = profile.certificate_domains.map do |certificate_domain|
+        "-d #{Shell.escape(certificate_domain)}"
+      end.join(" ")
       cert_path = Shell.escape(profile.cert_path(host))
       key_path = Shell.escape(profile.key_path(host))
       cert_dir = Shell.escape(host.cert_dir)
       acme_action = if mode == "renew"
-        "$ACME --renew --dns dns_cf --server letsencrypt -d #{Shell.escape(domain)} --ecc --force"
+        "$ACME --renew --dns dns_cf --server letsencrypt #{certificate_domains} --ecc --force"
       else
-        "$ACME --issue --dns dns_cf --server letsencrypt -d #{Shell.escape(domain)} -d #{Shell.escape("*.#{domain}")} --keylength ec-256 --force"
+        "$ACME --issue --dns dns_cf --server letsencrypt #{certificate_domains} --keylength ec-256 --force"
       end
 
       runner.run(<<~SH)

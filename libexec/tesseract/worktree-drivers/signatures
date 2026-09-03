@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_ID="${TESSERACT_APP_ID:-signatures}"
+APP_SHORTHAND="${TESSERACT_APP_SHORTHAND:-$APP_ID}"
 MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
 WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
 DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
@@ -15,6 +16,7 @@ PG_USER="${TESSERACT_PGUSER:-bot}"
 PG_PASSWORD="${TESSERACT_PGPASSWORD:-dev}"
 WEB_COMMAND="${TESSERACT_WEB_COMMAND:-bin/dev}"
 AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
+AGENT_NAME="${TESSERACT_AGENT_NAME:-codex}"
 HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
 PORT_END=$((PORT_START + PORT_COUNT - 1))
 
@@ -51,7 +53,11 @@ legacy_session_name() {
   printf "signatures_%s" "$(sanitize_slug "$1")"
 }
 
-workspace_label() {
+workspace_identity() {
+  printf "%s/%s" "$APP_SHORTHAND" "$1"
+}
+
+legacy_workspace_label() {
   printf "%s/%s" "$APP_ID" "$1"
 }
 
@@ -188,16 +194,35 @@ herdr_command() {
 }
 
 load_workspace() {
-  label="$1"
+  slug="$1"
+  identity=$(workspace_identity "$slug")
+  legacy_label=$(legacy_workspace_label "$slug")
   workspace_json=$(herdr_command workspace list)
   WORKSPACE_COUNT=$(printf "%s" "$workspace_json" |
-    jq -r --arg label "$label" '[.result.workspaces[] | select(.label == $label)] | length')
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '[.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      )] | length')
   if [ "$WORKSPACE_COUNT" -gt 1 ]; then
-    echo "multiple Herdr workspaces found for $label" >&2
+    echo "multiple Herdr workspaces found for $identity" >&2
     exit 1
   fi
   WORKSPACE_ID=$(printf "%s" "$workspace_json" |
-    jq -r --arg label "$label" '.result.workspaces[] | select(.label == $label) | .workspace_id')
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .workspace_id')
+  WORKSPACE_LABEL=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .label')
 }
 
 verify_workspace_path() {
@@ -213,12 +238,32 @@ verify_workspace_path() {
   fi
 }
 
+refresh_workspace_metadata() {
+  workspace_id="$1"
+  url="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  printf "%s" "$panes_json" | jq -r '.result.panes[].pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata \
+        "$pane_id" \
+        --source tesseract \
+        --token "url=$url" >/dev/null
+    done
+  printf "%s" "$panes_json" | jq -r '.result.panes[] | select(.agent != null) | .pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata \
+        "$pane_id" \
+        --source tesseract \
+        --display-agent "$AGENT_NAME" >/dev/null
+    done
+}
+
 emit_herdr_runtime() {
   slug="$1"
   path="$2"
   port="$3"
   workspace_id="$4"
-  label=$(workspace_label "$slug")
+  identity=$(workspace_identity "$slug")
   echo "path=$path"
   echo "port=$port"
   echo "url=https://${DOMAIN}:${port}"
@@ -226,7 +271,7 @@ emit_herdr_runtime() {
   echo "runtime=herdr"
   echo "session=$HERDR_SESSION_NAME"
   echo "workspace_id=$workspace_id"
-  echo "target=${HERDR_SESSION_NAME}:${label}"
+  echo "target=${HERDR_SESSION_NAME}:${identity}"
 }
 
 create_worktree() {
@@ -273,8 +318,8 @@ rollback_workspace() {
   trap - EXIT
   if [ "$code" -ne 0 ]; then
     workspace_id="${CREATED_WORKSPACE_ID:-}"
-    if [ -z "$workspace_id" ]; then
-      load_workspace "${CREATED_WORKSPACE_LABEL:-}" >/dev/null 2>&1 || true
+    if [ -z "$workspace_id" ] && [ -n "${CREATED_WORKSPACE_SLUG:-}" ]; then
+      load_workspace "$CREATED_WORKSPACE_SLUG" >/dev/null 2>&1 || true
       [ "${WORKSPACE_COUNT:-0}" -eq 1 ] && workspace_id="${WORKSPACE_ID:-}"
     fi
     [ -z "$workspace_id" ] || herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
@@ -291,8 +336,9 @@ start_worktree() {
   fi
 
   legacy_session=$(legacy_session_name "$slug")
-  label=$(workspace_label "$slug")
-  load_workspace "$label"
+  identity=$(workspace_identity "$slug")
+  label="$identity"
+  load_workspace "$slug"
   if [ "$WORKSPACE_COUNT" -eq 1 ] && tmux has-session -t "=$legacy_session" 2>/dev/null; then
     echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
     exit 1
@@ -305,7 +351,11 @@ start_worktree() {
   port=$(port_for_slug "$slug")
   if [ "$WORKSPACE_COUNT" -eq 1 ]; then
     verify_workspace_path "$WORKSPACE_ID" "$path"
-    echo "workspace already running: $label"
+    if [ "$WORKSPACE_LABEL" != "$identity" ]; then
+      herdr_command workspace rename "$WORKSPACE_ID" "$identity" >/dev/null
+    fi
+    refresh_workspace_metadata "$WORKSPACE_ID" "https://${DOMAIN}:${port}"
+    echo "workspace already running: $identity"
     emit_herdr_runtime "$slug" "$path" "$port" "$WORKSPACE_ID"
     return
   fi
@@ -319,9 +369,8 @@ start_worktree() {
   printf -v agent_command \
     'TESSERACT_LIVE_ACTIVITY_APP=%q %s' \
     "$APP_ID" "$AGENT_COMMAND"
-
   CREATED_WORKSPACE_ID=""
-  CREATED_WORKSPACE_LABEL="$label"
+  CREATED_WORKSPACE_SLUG="$slug"
   trap rollback_workspace EXIT
   workspace_create_json=$(herdr_command workspace create \
     --cwd "$path" \
@@ -330,8 +379,11 @@ start_worktree() {
     --no-focus)
   CREATED_WORKSPACE_ID=$(printf "%s" "$workspace_create_json" |
     jq -er '.result.workspace.workspace_id')
+  code_tab_id=$(printf "%s" "$workspace_create_json" |
+    jq -er '.result.tab.tab_id')
   root_pane_id=$(printf "%s" "$workspace_create_json" |
     jq -er '.result.root_pane.pane_id')
+  herdr_command tab rename "$code_tab_id" Code >/dev/null
   split_json=$(herdr_command pane split \
     --pane "$root_pane_id" \
     --direction right \
@@ -339,24 +391,47 @@ start_worktree() {
     --cwd "$path" \
     --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
     --no-focus)
-  agent_pane_id=$(printf "%s" "$split_json" | jq -er '.result.pane.pane_id')
-  herdr_command pane run "$root_pane_id" "$dev_command" >/dev/null
-  herdr_command pane run "$agent_pane_id" "$agent_command" >/dev/null
+  terminal_pane_id=$(printf "%s" "$split_json" | jq -er '.result.pane.pane_id')
+  herdr_command pane rename "$root_pane_id" Codex >/dev/null
+  herdr_command pane rename "$terminal_pane_id" Terminal >/dev/null
+  servers_tab_json=$(herdr_command tab create \
+    --workspace "$CREATED_WORKSPACE_ID" \
+    --cwd "$path" \
+    --label Servers \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  server_pane_id=$(printf "%s" "$servers_tab_json" |
+    jq -er '.result.root_pane.pane_id')
+  herdr_command pane run "$root_pane_id" "$agent_command" >/dev/null
+  herdr_command pane run "$server_pane_id" "$dev_command" >/dev/null
+  herdr_command pane report-metadata \
+    "$root_pane_id" \
+    --source tesseract \
+    --display-agent "$AGENT_NAME" \
+    --token "url=https://${DOMAIN}:${port}" >/dev/null
+  herdr_command pane report-metadata \
+    "$terminal_pane_id" \
+    --source tesseract \
+    --token "url=https://${DOMAIN}:${port}" >/dev/null
+  herdr_command pane report-metadata \
+    "$server_pane_id" \
+    --source tesseract \
+    --token "url=https://${DOMAIN}:${port}" >/dev/null
   trap - EXIT
 
-  echo "started $label"
+  echo "started $identity"
   emit_herdr_runtime "$slug" "$path" "$port" "$CREATED_WORKSPACE_ID"
 }
 
 stop_worktree() {
   slug="$1"
-  label=$(workspace_label "$slug")
+  identity=$(workspace_identity "$slug")
   legacy_session=$(legacy_session_name "$slug")
   stopped=false
-  load_workspace "$label"
+  load_workspace "$slug"
   if [ "$WORKSPACE_COUNT" -eq 1 ]; then
     herdr_command workspace close "$WORKSPACE_ID" >/dev/null
-    echo "stopped $label"
+    echo "stopped $identity"
     stopped=true
   fi
   if tmux has-session -t "=$legacy_session" 2>/dev/null; then
@@ -365,14 +440,14 @@ stop_worktree() {
     stopped=true
   fi
   if [ "$stopped" = false ]; then
-    echo "not running: $label"
+    echo "not running: $identity"
   fi
 }
 
 status_worktree() {
   slug="$1"
   path=$(worktree_path "$slug")
-  label=$(workspace_label "$slug")
+  identity=$(workspace_identity "$slug")
   legacy_session=$(legacy_session_name "$slug")
 
   echo "app=$APP_ID"
@@ -389,7 +464,7 @@ status_worktree() {
     echo "url=-"
   fi
 
-  load_workspace "$label"
+  load_workspace "$slug"
   legacy_running=false
   tmux has-session -t "=$legacy_session" 2>/dev/null && legacy_running=true
   if [ "$WORKSPACE_COUNT" -eq 1 ] && [ "$legacy_running" = true ]; then
@@ -402,7 +477,7 @@ status_worktree() {
     echo "runtime=herdr"
     echo "session=$HERDR_SESSION_NAME"
     echo "workspace_id=$WORKSPACE_ID"
-    echo "target=${HERDR_SESSION_NAME}:${label}"
+    echo "target=${HERDR_SESSION_NAME}:${identity}"
   elif [ "$legacy_running" = true ]; then
     echo "running=yes"
     echo "runtime=tmux"

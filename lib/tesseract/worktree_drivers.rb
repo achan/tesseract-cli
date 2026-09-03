@@ -85,6 +85,7 @@ module Tesseract
       def environment(profile, host)
         {
           "TESSERACT_APP_ID" => profile.id,
+          "TESSERACT_APP_SHORTHAND" => profile.shorthand,
           "TESSERACT_MAIN_PATH" => profile.main_path,
           "TESSERACT_WORKTREE_ROOT" => profile.worktree_root,
           "TESSERACT_DOMAIN" => profile.domain,
@@ -98,6 +99,7 @@ module Tesseract
           "TESSERACT_PGPASSWORD" => host.postgres_password,
           "TESSERACT_WEB_COMMAND" => profile.web_command,
           "TESSERACT_AGENT_COMMAND" => profile.agent_command,
+          "TESSERACT_AGENT_NAME" => profile.agent_command.split.first,
           "TESSERACT_HERDR_SESSION" => "default"
         }
       end

@@ -322,14 +322,40 @@ bin/tesseract worktree status mobile-dashboard cost-calculator --host case
 bin/tesseract attach mobile_dashboard_cost_calculator --host case
 ```
 
-Signatures uses the default Herdr session and creates a `signatures/<slug>`
-workspace with a dev-server pane and a Codex pane. Other configured apps still
-use tmux. `stop` closes the app's runtime and processes but leaves the worktree,
-database, env files, and registry entry in place. `remove` is destructive: it
-stops the runtime and removes the git worktree. Signatures lifecycle behavior
-is owned by the central `signatures` driver; compatibility profiles such as
-Docovia and Flexday may still delegate to an app-local adapter while they are
-migrated.
+Signatures uses the default Herdr session. Its workspace display label is the
+shorthand app/worktree identity:
+
+```text
+sig/<slug>
+```
+
+The Codex pane's agent display label is simply:
+
+```text
+codex
+```
+
+Each Signatures workspace has two tabs. `Code` opens first with a vertical
+split: Codex on the left and an interactive terminal on the right. `Servers`
+is the second tab and runs `bin/dev` in its root pane.
+
+The driver publishes the worktree's full HTTPS URL as `url` metadata on every
+pane. Herdr's right-side tab status command reads that token instead of showing
+the server hostname, so the same visible, link-detected URL remains available
+while moving between Code, Terminal, and Servers.
+
+Other configured apps still use tmux. `stop` closes the app's runtime and
+processes but leaves the worktree, database, env files, and registry entry in
+place. `remove` is destructive: it stops the runtime and removes the git
+worktree. Signatures lifecycle behavior is owned by the central `signatures`
+driver; compatibility profiles such as Docovia and Flexday may still delegate
+to an app-local adapter while they are migrated.
+
+`config/app-shorthands.yml` defines display names for Signatures (`sig`),
+Docovia (`doc`), Smilesnap (`ss`), Flexday (`f`), Chrome Extensions (`cex`),
+Tesseract Web (`tess`), and Mobile Dashboard (`md`). Only the central
+Signatures driver consumes these names for Herdr today; the other definitions
+are ready for later driver migrations.
 
 ## Live Worktrees
 
@@ -344,7 +370,7 @@ Example output:
 ```text
 RUNTIME  TARGET                           RSS URL                                      CHANGELOG
 tmux     docovia_patientnow_integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
-herdr    default:signatures/general-dev 2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
+herdr    default:sig/general-dev        2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
 ```
 
 `live` scans each configured app's main clone, asks its selected driver for
@@ -399,6 +425,10 @@ main_path: /home/bot/repos/example
 domain: example.tars.achan.bot
 env_shared_path: /home/bot/repos/example/.env.local
 ```
+
+Add its Herdr display shorthand to `config/app-shorthands.yml`. Until an app's
+driver uses Herdr, this only prepares the shared definition and does not change
+its runtime behavior.
 
 Select a centrally stored driver with `worktree_driver`. Signatures uses the
 `signatures` driver under `libexec/tesseract/worktree-drivers`; the CLI sends

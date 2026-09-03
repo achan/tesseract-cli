@@ -7,7 +7,7 @@ module Tesseract
     class Registry
       BUILTIN_DRIVERS = %w[repository git].freeze
       REQUIRED_COMMANDS = {
-        "docovia" => %w[git herdr jq mise tmux],
+        "sprung" => %w[git herdr jq mise tmux],
         "signatures" => %w[createdb git herdr jq mise ss]
       }.freeze
 
@@ -86,10 +86,14 @@ module Tesseract
       def environment(profile, host)
         {
           "TESSERACT_APP_ID" => profile.id,
+          "TESSERACT_REQUESTED_APP_NAME" => profile.requested_name,
           "TESSERACT_APP_SHORTHAND" => profile.shorthand,
           "TESSERACT_MAIN_PATH" => profile.main_path,
           "TESSERACT_WORKTREE_ROOT" => profile.worktree_root,
           "TESSERACT_DOMAIN" => profile.domain,
+          "TESSERACT_DOMAIN_ALIASES" => profile.domain_aliases.join(" "),
+          "TESSERACT_RUNTIME_DOMAIN" => profile.runtime_domain,
+          "TESSERACT_S3_BUCKET_NAME_PUBLIC" => profile.public_s3_bucket.to_s,
           "TESSERACT_PORT_START" => profile.base_port.to_s,
           "TESSERACT_PORT_COUNT" => profile.port_count.to_s,
           "TESSERACT_DATABASE_PREFIX" => profile.database_prefix,

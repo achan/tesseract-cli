@@ -298,7 +298,9 @@ class CLITest < Minitest::Test
     status, stdout, stderr = run_cli("--host", "local", "app", "list")
 
     assert_equal 0, status
-    assert_includes stdout, "docovia"
+    assert_includes stdout, "sprung"
+    refute_includes stdout.lines.map(&:strip), "docovia"
+    refute_includes stdout.lines.map(&:strip), "smilesnap"
     assert_includes stdout, "flexday"
     assert_includes stdout, "tesseract-web"
     assert_empty stderr
@@ -397,7 +399,7 @@ class CLITest < Minitest::Test
     status, stdout, stderr = run_cli("app", "list", "--host", "local")
 
     assert_equal 0, status
-    assert_includes stdout, "docovia"
+    assert_includes stdout, "sprung"
     assert_empty stderr
   end
 
@@ -405,11 +407,11 @@ class CLITest < Minitest::Test
     status, stdout, stderr = run_cli("--host=local", "app", "list")
 
     assert_equal 0, status
-    assert_includes stdout, "docovia"
+    assert_includes stdout, "sprung"
     assert_empty stderr
   end
 
-  def test_worktree_create_dispatches_to_central_docovia_driver
+  def test_docovia_alias_dispatches_to_canonical_sprung_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -428,11 +430,39 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_empty service_runner.scripts
-    assert_includes script, "export TESSERACT_APP_ID='docovia'"
+    assert_includes script, "export TESSERACT_APP_ID='sprung'"
+    assert_includes script, "export TESSERACT_REQUESTED_APP_NAME='docovia'"
+    assert_includes script, "export TESSERACT_APP_SHORTHAND='spr'"
+    assert_includes script, "export TESSERACT_DOMAIN_ALIASES='smilesnap.tars.achan.bot'"
+    assert_includes script, "export TESSERACT_RUNTIME_DOMAIN='docovia.tars.achan.bot'"
+    assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='docovia-development-public'"
     assert_includes script, "set -- 'worktree' 'create' 'demo' 'existing-branch'"
     assert_includes script, 'repository_command worktree create "$slug" "$@"'
     assert_includes script, 'herdr_command workspace create'
     refute_includes script, "docker exec tesseract-postgres"
+    assert_empty stderr.string
+  end
+
+  def test_smilesnap_alias_exports_smilesnap_runtime_configuration
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "worktree", "start", "smilesnap", "demo"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "export TESSERACT_APP_ID='sprung'"
+    assert_includes script, "export TESSERACT_REQUESTED_APP_NAME='smilesnap'"
+    assert_includes script, "export TESSERACT_RUNTIME_DOMAIN='smilesnap.tars.achan.bot'"
+    assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='smilesnap-development-public'"
     assert_empty stderr.string
   end
 
@@ -759,12 +789,12 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_worktree_remove_passes_force_through_central_docovia_driver
+  def test_smilesnap_alias_passes_force_through_canonical_sprung_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
     cli = Tesseract::CLI.new(
-      ["--host", "tars", "worktree", "remove", "docovia", "demo", "--force"],
+      ["--host", "tars", "worktree", "remove", "smilesnap", "demo", "--force"],
       stdout: stdout,
       stderr: stderr,
       root: File.expand_path("..", __dir__)
@@ -1027,7 +1057,7 @@ class CLITest < Minitest::Test
     end
   end
 
-  def test_dns_sync_docovia_includes_wildcard_record
+  def test_dns_sync_sprung_alias_includes_both_domain_families
     old_token = ENV["CLOUDFLARE_API_TOKEN"]
     ENV["CLOUDFLARE_API_TOKEN"] = "test-token"
     stdout = StringIO.new
@@ -1047,6 +1077,8 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes script, "docovia.tars.achan.bot"
     assert_includes script, "*.docovia.tars.achan.bot"
+    assert_includes script, "smilesnap.tars.achan.bot"
+    assert_includes script, "*.smilesnap.tars.achan.bot"
     assert_empty stderr.string
   ensure
     if old_token
@@ -1076,10 +1108,40 @@ class CLITest < Minitest::Test
     assert_equal 0, status
     assert_includes script, "export CF_Token='test-token'"
     assert_includes script, "--issue --dns dns_cf --server letsencrypt"
-    assert_includes script, "-d 'docovia.tars.achan.bot' -d '*.docovia.tars.achan.bot'"
+    assert_includes script, "-d 'docovia.tars.achan.bot' -d '*.docovia.tars.achan.bot' -d 'smilesnap.tars.achan.bot' -d '*.smilesnap.tars.achan.bot'"
     assert_includes script, "--fullchain-file '/home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.crt'"
     assert_includes script, "--key-file '/home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.key'"
     assert_includes script, "chmod 0600 '/home/bot/.local/share/tesseract/certs/docovia.tars.achan.bot.key'"
+    assert_empty stderr.string
+  ensure
+    if old_token
+      ENV["CLOUDFLARE_API_TOKEN"] = old_token
+    else
+      ENV.delete("CLOUDFLARE_API_TOKEN")
+    end
+  end
+
+  def test_cert_renew_converges_to_all_sprung_domains
+    old_token = ENV["CLOUDFLARE_API_TOKEN"]
+    ENV["CLOUDFLARE_API_TOKEN"] = "test-token"
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = ScriptCaptureRunner.new
+    cli = Tesseract::CLI.new(
+      ["--host", "tars", "cert", "renew", "smilesnap"],
+      stdout: stdout,
+      stderr: stderr,
+      root: File.expand_path("..", __dir__)
+    )
+    cli.instance_variable_set(:@runner, runner)
+
+    status = cli.run
+    script = runner.scripts.fetch(0)
+
+    assert_equal 0, status
+    assert_includes script, "--renew --dns dns_cf --server letsencrypt"
+    assert_includes script, "-d 'docovia.tars.achan.bot' -d '*.docovia.tars.achan.bot' -d 'smilesnap.tars.achan.bot' -d '*.smilesnap.tars.achan.bot'"
+    assert_includes script, "--install-cert -d 'docovia.tars.achan.bot'"
     assert_empty stderr.string
   ensure
     if old_token
@@ -1106,6 +1168,9 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes script, "echo \"domain=docovia.tars.achan.bot\""
+    assert_includes script, "*.docovia.tars.achan.bot"
+    assert_includes script, "smilesnap.tars.achan.bot"
+    assert_includes script, "*.smilesnap.tars.achan.bot"
     assert_includes script, "openssl x509"
     assert_empty stderr.string
   end

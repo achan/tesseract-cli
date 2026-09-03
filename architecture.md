@@ -68,11 +68,11 @@ Examples:
 ```bash
 tesseract doctor
 tesseract doctor --host tars
-tesseract app clone docovia
-tesseract worktree create docovia no-show
-tesseract worktree start docovia no-show
-tesseract worktree status docovia no-show
-tesseract worktree remove docovia no-show
+tesseract app clone sprung
+tesseract worktree create sprung no-show
+tesseract worktree start sprung no-show
+tesseract worktree status sprung no-show
+tesseract worktree remove sprung no-show
 ```
 
 The normal operating model is:
@@ -225,20 +225,27 @@ The intended behavior is:
 
 Raw `.env.local` files should not be copied manually between machines.
 
-## Docovia Example Profile
+## Sprung Example Profile
 
-Docovia is the first example app profile.
+Sprung is the canonical profile for the shared Docovia and SmileSnap app.
+The `docovia` and `smilesnap` CLI names are aliases of this one profile.
 
 It is an example only. Future apps should be added by creating additional app
 profiles, not by changing core `tesseract` behavior.
 
 Example profile values:
 
-- App id: `docovia`
+- App id: `sprung`
+- App aliases: `docovia`, `smilesnap`
 - Git remote: `git@github.com:getsprung/app`
 - Main path on `tars`: `/home/bot/repos/sprung-app`
 - Worktree root on `tars`: `/home/bot/repos/sprung-worktrees`
 - Development domain: `docovia.tars.achan.bot`
+- Development domain alias: `smilesnap.tars.achan.bot`
+- Runtime selected by `sprung` or `docovia`: `docovia.tars.achan.bot` with
+  `docovia-development-public`
+- Runtime selected by `smilesnap`: `smilesnap.tars.achan.bot` with
+  `smilesnap-development-public`
 - Base port: `3100`
 - Example worktree port range: `3101-3199`
 - Runtime versions: read from repo files such as `.ruby-version` and `.nvmrc`

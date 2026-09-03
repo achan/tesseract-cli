@@ -1,4 +1,6 @@
 require "minitest/autorun"
+require "fileutils"
+require "tmpdir"
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
@@ -74,19 +76,59 @@ class ConfigTest < Minitest::Test
     assert_equal ["tesseract-web.case.achan.bot"], app.dns_records
   end
 
-  def test_loads_docovia_profile
-    app = @config.app("docovia")
+  def test_loads_sprung_profile_and_aliases
+    app = @config.app("sprung")
 
-    assert_equal "docovia", app.id
-    assert_equal "doc", app.shorthand
+    assert_equal "sprung", app.id
+    assert_equal "sprung", app.requested_name
+    assert_equal ["docovia", "smilesnap"], app.app_aliases
+    assert_equal "spr", app.shorthand
     assert_equal "git@github.com:getsprung/app", app.repo
     assert_equal "docovia.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/sprung-app", app.main_path
     assert_equal "/home/bot/repos/sprung-worktrees", app.worktree_root
-    assert_equal "docovia", app.worktree_driver
+    assert_equal ["smilesnap.tars.achan.bot"], app.domain_aliases
+    assert_equal "sprung", app.worktree_driver
+    assert_equal "docovia.tars.achan.bot", app.runtime_domain
+    assert_equal "docovia-development-public", app.public_s3_bucket
     assert_equal "herdr", app.session_driver
     assert_equal 3100, app.base_port
-    assert_equal ["docovia.tars.achan.bot", "*.docovia.tars.achan.bot"], app.dns_records
+    assert_equal [
+      "docovia.tars.achan.bot",
+      "*.docovia.tars.achan.bot",
+      "smilesnap.tars.achan.bot",
+      "*.smilesnap.tars.achan.bot"
+    ], app.dns_records
+    assert_equal app.dns_records, app.certificate_domains
+
+    %w[docovia smilesnap].each do |alias_name|
+      aliased = @config.app(alias_name)
+      assert_equal "sprung", aliased.id
+      assert_equal alias_name, aliased.requested_name
+      assert_equal app.main_path, aliased.main_path
+      assert_equal app.worktree_root, aliased.worktree_root
+      assert_equal app.database_prefix, aliased.database_prefix
+      assert_equal app.base_port, aliased.base_port
+    end
+    assert_equal "docovia.tars.achan.bot", @config.app("docovia").runtime_domain
+    assert_equal "docovia-development-public", @config.app("docovia").public_s3_bucket
+    assert_equal "smilesnap.tars.achan.bot", @config.app("smilesnap").runtime_domain
+    assert_equal "smilesnap-development-public", @config.app("smilesnap").public_s3_bucket
+  end
+
+  def test_rewrites_sprung_primary_and_alias_domains_for_case_host
+    app = @config.app("smilesnap", host: @config.host("case"))
+
+    assert_equal "docovia.case.achan.bot", app.domain
+    assert_equal ["smilesnap.case.achan.bot"], app.domain_aliases
+    assert_equal "smilesnap.case.achan.bot", app.runtime_domain
+    assert_equal "smilesnap-development-public", app.public_s3_bucket
+    assert_equal [
+      "docovia.case.achan.bot",
+      "*.docovia.case.achan.bot",
+      "smilesnap.case.achan.bot",
+      "*.smilesnap.case.achan.bot"
+    ], app.dns_records
   end
 
   def test_loads_flexday_profile
@@ -172,6 +214,7 @@ class ConfigTest < Minitest::Test
     assert_equal(
       {
         "signatures" => "sig",
+        "sprung" => "spr",
         "docovia" => "doc",
         "smilesnap" => "ss",
         "flexday" => "f",
@@ -180,7 +223,7 @@ class ConfigTest < Minitest::Test
         "mobile-dashboard" => "md"
       },
       %w[
-        signatures docovia smilesnap flexday chrome-extensions
+        signatures sprung docovia smilesnap flexday chrome-extensions
         tesseract-web mobile-dashboard
       ].to_h { |id| [id, @config.app_shorthand(id)] }
     )
@@ -227,12 +270,37 @@ class ConfigTest < Minitest::Test
 
   def test_lists_apps
     assert_includes @config.apps.map(&:id), "chrome-extensions"
-    assert_includes @config.apps.map(&:id), "docovia"
+    assert_includes @config.apps.map(&:id), "sprung"
+    refute_includes @config.apps.map(&:id), "docovia"
+    refute_includes @config.apps.map(&:id), "smilesnap"
     assert_includes @config.apps.map(&:id), "eso"
     assert_includes @config.apps.map(&:id), "flexday"
     assert_includes @config.apps.map(&:id), "mobile-dashboard"
     assert_includes @config.apps.map(&:id), "signatures"
     assert_includes @config.apps.map(&:id), "tesseract-web"
+  end
+
+  def test_rejects_app_alias_collisions
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, "config", "apps"))
+      File.write(File.join(root, "config", "app-shorthands.yml"), "{}\n")
+      base = {
+        "repo" => "example/repo",
+        "main_path" => "/tmp/example",
+        "domain" => "example.test"
+      }
+      File.write(
+        File.join(root, "config", "apps", "one.yml"),
+        YAML.dump(base.merge("id" => "one", "app_aliases" => ["shared"]))
+      )
+      File.write(
+        File.join(root, "config", "apps", "two.yml"),
+        YAML.dump(base.merge("id" => "two", "app_aliases" => ["shared"]))
+      )
+
+      error = assert_raises(Tesseract::Config::Error) { Tesseract::Config.new(root).apps }
+      assert_equal "app name or alias shared is used by both one and two", error.message
+    end
   end
 
   def test_lists_configured_hosts

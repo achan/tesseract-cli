@@ -1,0 +1,27 @@
+id: sprung
+app_aliases:
+  - docovia
+  - smilesnap
+repo: git@github.com:getsprung/app
+main_path: /home/bot/repos/sprung-app
+worktree_root: /home/bot/repos/sprung-worktrees
+worktree_driver: sprung
+session_driver: herdr
+domain: docovia.tars.achan.bot
+domain_aliases:
+  - smilesnap.tars.achan.bot
+runtime_domains:
+  sprung: docovia.tars.achan.bot
+  docovia: docovia.tars.achan.bot
+  smilesnap: smilesnap.tars.achan.bot
+public_s3_buckets:
+  sprung: docovia-development-public
+  docovia: docovia-development-public
+  smilesnap: smilesnap-development-public
+base_port: 3100
+port_count: 100
+database_prefix: sprung_dev_worktree
+env_shared_path: /home/bot/repos/sprung-app/.env.local
+processes:
+  web: bundle exec rails server
+  agent: codex --yolo

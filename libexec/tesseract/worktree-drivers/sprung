@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ID="${TESSERACT_APP_ID:-docovia}"
+APP_ID="${TESSERACT_APP_ID:-sprung}"
+REQUESTED_APP_NAME="${TESSERACT_REQUESTED_APP_NAME:-$APP_ID}"
 APP_SHORTHAND="${TESSERACT_APP_SHORTHAND:-$APP_ID}"
 MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
 WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
 DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
+DOMAIN_ALIASES="${TESSERACT_DOMAIN_ALIASES:-}"
+RUNTIME_DOMAIN="${TESSERACT_RUNTIME_DOMAIN:-$DOMAIN}"
 CERT_PATH="${TESSERACT_CERT_PATH:?missing TESSERACT_CERT_PATH}"
 KEY_PATH="${TESSERACT_KEY_PATH:?missing TESSERACT_KEY_PATH}"
 AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
@@ -43,15 +46,19 @@ worktree_path() {
 }
 
 legacy_session_name() {
-  printf "%s_%s" "$APP_ID" "$(sanitize_slug "$1")"
+  printf "docovia_%s" "$(sanitize_slug "$1")"
 }
 
 workspace_identity() {
   printf "%s/%s" "$APP_SHORTHAND" "$1"
 }
 
-legacy_workspace_label() {
-  printf "%s/%s" "$APP_ID" "$1"
+legacy_workspace_shorthand_label() {
+  printf "doc/%s" "$1"
+}
+
+legacy_workspace_app_label() {
+  printf "docovia/%s" "$1"
 }
 
 runtime_spec() {
@@ -139,6 +146,43 @@ ensure_env_setting() {
   fi
 }
 
+env_setting() {
+  env_file="$1"
+  key="$2"
+  sed -n "s/^${key}=//p" "$env_file" | head -1 | tr -d '"' | tr -d "'"
+}
+
+ensure_runtime_env() {
+  slug="$1"
+  port="$2"
+  env_file="$(worktree_path "$slug")/.env.development.local"
+  ensure_env_setting "$env_file" APP_DOMAIN "$RUNTIME_DOMAIN"
+  ensure_env_setting "$env_file" DASHBOARD_DOMAIN "app.${RUNTIME_DOMAIN}"
+  ensure_env_setting "$env_file" WEBSITE_URL "https://app.${RUNTIME_DOMAIN}:${port}"
+  ensure_env_setting "$env_file" API_URL "https://api.${RUNTIME_DOMAIN}:${port}"
+  ensure_env_setting "$env_file" S3_BUCKET_NAME_PUBLIC "$S3_BUCKET_NAME_PUBLIC"
+}
+
+ensure_running_configuration_matches() {
+  slug="$1"
+  env_file="$(worktree_path "$slug")/.env.development.local"
+  configured_domain=$(env_setting "$env_file" APP_DOMAIN)
+  configured_dashboard_domain=$(env_setting "$env_file" DASHBOARD_DOMAIN)
+  configured_website_url=$(env_setting "$env_file" WEBSITE_URL)
+  configured_api_url=$(env_setting "$env_file" API_URL)
+  configured_bucket=$(env_setting "$env_file" S3_BUCKET_NAME_PUBLIC)
+  port=$(port_for_slug "$slug")
+  if [ "$configured_domain" != "$RUNTIME_DOMAIN" ] || \
+    [ "$configured_dashboard_domain" != "app.${RUNTIME_DOMAIN}" ] || \
+    [ "$configured_website_url" != "https://app.${RUNTIME_DOMAIN}:${port}" ] || \
+    [ "$configured_api_url" != "https://api.${RUNTIME_DOMAIN}:${port}" ] || \
+    [ "$configured_bucket" != "$S3_BUCKET_NAME_PUBLIC" ]; then
+    echo "worktree ${APP_SHORTHAND}/${slug} is already running with a different runtime configuration" >&2
+    echo "run 'tesseract worktree stop ${REQUESTED_APP_NAME} ${slug}', then 'tesseract worktree start ${REQUESTED_APP_NAME} ${slug}'" >&2
+    exit 1
+  fi
+}
+
 ensure_startable() {
   slug="$1"
   path=$(worktree_path "$slug")
@@ -148,7 +192,6 @@ ensure_startable() {
     exit 1
   }
   ensure_env_setting "$env_file" WEBPACKER_DEV_SERVER_HOST 0.0.0.0
-  ensure_env_setting "$env_file" S3_BUCKET_NAME_PUBLIC "$S3_BUCKET_NAME_PUBLIC"
   if [ ! -e "$path/app.crt" ] && [ -r "$CERT_PATH" ]; then
     ln -s "$CERT_PATH" "$path/app.crt"
   fi
@@ -177,12 +220,15 @@ herdr_command() {
 load_workspace() {
   slug="$1"
   identity=$(workspace_identity "$slug")
-  legacy_label=$(legacy_workspace_label "$slug")
+  legacy_shorthand_label=$(legacy_workspace_shorthand_label "$slug")
+  legacy_app_label=$(legacy_workspace_app_label "$slug")
   workspace_json=$(herdr_command workspace list)
   WORKSPACE_COUNT=$(printf "%s" "$workspace_json" |
-    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+    jq -r --arg identity "$identity" --arg legacy_short "$legacy_shorthand_label" \
+      --arg legacy_app "$legacy_app_label" \
       '[.result.workspaces[] | select(
-        .label == $legacy or
+        .label == $legacy_short or
+        .label == $legacy_app or
         .label == $identity or
         (.label | startswith($identity + "\n"))
       )] | length')
@@ -191,16 +237,20 @@ load_workspace() {
     exit 1
   fi
   WORKSPACE_ID=$(printf "%s" "$workspace_json" |
-    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+    jq -r --arg identity "$identity" --arg legacy_short "$legacy_shorthand_label" \
+      --arg legacy_app "$legacy_app_label" \
       '.result.workspaces[] | select(
-        .label == $legacy or
+        .label == $legacy_short or
+        .label == $legacy_app or
         .label == $identity or
         (.label | startswith($identity + "\n"))
       ) | .workspace_id')
   WORKSPACE_LABEL=$(printf "%s" "$workspace_json" |
-    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+    jq -r --arg identity "$identity" --arg legacy_short "$legacy_shorthand_label" \
+      --arg legacy_app "$legacy_app_label" \
       '.result.workspaces[] | select(
-        .label == $legacy or
+        .label == $legacy_short or
+        .label == $legacy_app or
         .label == $identity or
         (.label | startswith($identity + "\n"))
       ) | .label')
@@ -244,6 +294,9 @@ emit_herdr_runtime() {
   echo "path=$path"
   echo "port=$port"
   echo "url=https://app.${DOMAIN}:${port}"
+  for alias_domain in $DOMAIN_ALIASES; do
+    echo "url_alias[${alias_domain}]=https://app.${alias_domain}:${port}"
+  done
   echo "running=yes"
   echo "runtime=herdr"
   echo "session=$HERDR_SESSION_NAME"
@@ -285,6 +338,7 @@ start_worktree() {
   app_url="https://app.${DOMAIN}:${port}"
   if [ "$WORKSPACE_COUNT" -eq 1 ]; then
     verify_workspace_path "$WORKSPACE_ID" "$path"
+    ensure_running_configuration_matches "$slug"
     if [ "$WORKSPACE_LABEL" != "$identity" ]; then
       herdr_command workspace rename "$WORKSPACE_ID" "$identity" >/dev/null
     fi
@@ -294,6 +348,7 @@ start_worktree() {
     return
   fi
 
+  ensure_runtime_env "$slug" "$port"
   ensure_startable "$slug"
   webpack_port=$(webpack_port_for_slug "$slug")
   prefix=$(runtime_prefix "$path")
@@ -380,9 +435,19 @@ stop_worktree() {
 status_worktree() {
   slug="$1"
   path=$(worktree_path "$slug")
-  repository_command worktree status "$slug" |
+  repository_status=$(repository_command worktree status "$slug")
+  printf "%s\n" "$repository_status" |
     sed -e '/^running=/d' -e '/^session=/d' -e '/^runtime=/d' \
-      -e '/^target=/d' -e '/^tmux_session=/d' -e '/^legacy_runtime=/d'
+      -e '/^target=/d' -e '/^tmux_session=/d' -e '/^legacy_runtime=/d' \
+      -e '/^app=/d' -e '/^url=/d' -e '/^url_alias\[/d'
+  port=$(printf "%s\n" "$repository_status" | sed -n 's/^port=//p' | tail -n1)
+  echo "app=$APP_ID"
+  if [ -n "$port" ]; then
+    echo "url=https://app.${DOMAIN}:${port}"
+    for alias_domain in $DOMAIN_ALIASES; do
+      echo "url_alias[${alias_domain}]=https://app.${alias_domain}:${port}"
+    done
+  fi
 
   load_workspace "$slug"
   legacy_session=$(legacy_session_name "$slug")

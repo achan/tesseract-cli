@@ -90,7 +90,9 @@ class ConfigTest < Minitest::Test
     assert_equal ["smilesnap.tars.achan.bot"], app.domain_aliases
     assert_equal "sprung", app.worktree_driver
     assert_equal "docovia.tars.achan.bot", app.runtime_domain
+    assert_equal "Docovia", app.runtime_app_name
     assert_equal "docovia-development-public", app.public_s3_bucket
+    assert_equal "docovia-public", app.cdn_bucket
     assert_equal "herdr", app.session_driver
     assert_equal 3100, app.base_port
     assert_equal [
@@ -111,9 +113,13 @@ class ConfigTest < Minitest::Test
       assert_equal app.base_port, aliased.base_port
     end
     assert_equal "docovia.tars.achan.bot", @config.app("docovia").runtime_domain
+    assert_equal "Docovia", @config.app("docovia").runtime_app_name
     assert_equal "docovia-development-public", @config.app("docovia").public_s3_bucket
+    assert_equal "docovia-public", @config.app("docovia").cdn_bucket
     assert_equal "smilesnap.tars.achan.bot", @config.app("smilesnap").runtime_domain
+    assert_equal "SmileSnap", @config.app("smilesnap").runtime_app_name
     assert_equal "smilesnap-development-public", @config.app("smilesnap").public_s3_bucket
+    assert_equal "smilesnap-public", @config.app("smilesnap").cdn_bucket
   end
 
   def test_rewrites_sprung_primary_and_alias_domains_for_case_host
@@ -122,6 +128,7 @@ class ConfigTest < Minitest::Test
     assert_equal "docovia.case.achan.bot", app.domain
     assert_equal ["smilesnap.case.achan.bot"], app.domain_aliases
     assert_equal "smilesnap.case.achan.bot", app.runtime_domain
+    assert_equal "SmileSnap", app.runtime_app_name
     assert_equal "smilesnap-development-public", app.public_s3_bucket
     assert_equal [
       "docovia.case.achan.bot",

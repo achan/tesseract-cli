@@ -14,10 +14,18 @@ runtime_domains:
   sprung: docovia.tars.achan.bot
   docovia: docovia.tars.achan.bot
   smilesnap: smilesnap.tars.achan.bot
+runtime_app_names:
+  sprung: Docovia
+  docovia: Docovia
+  smilesnap: SmileSnap
 public_s3_buckets:
   sprung: docovia-development-public
   docovia: docovia-development-public
   smilesnap: smilesnap-development-public
+cdn_buckets:
+  sprung: docovia-public
+  docovia: docovia-public
+  smilesnap: smilesnap-public
 base_port: 3100
 port_count: 100
 database_prefix: sprung_dev_worktree

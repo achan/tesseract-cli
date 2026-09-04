@@ -321,9 +321,11 @@ by status and must be stopped before the worktree can start in Herdr.
 `docovia` and `smilesnap` remain accepted aliases; they resolve to the same
 repository, worktree paths, databases, ports, certificate, and runtime state.
 The name used for `worktree start` selects the generated application environment:
-`sprung` and `docovia` write the Docovia domains and
-`docovia-development-public`, while `smilesnap` writes the SmileSnap domains and
-`smilesnap-development-public`. Switching requires stopping the worktree first;
+`sprung` and `docovia` write `APP_NAME=Docovia`, the Docovia domains, and
+`docovia-development-public`, while `smilesnap` writes `APP_NAME=SmileSnap`, the
+SmileSnap domains, `smilesnap-development-public`, and its corresponding S3
+`CDN_URL` bucket (`smilesnap-public`; `docovia-public` for Docovia). Switching
+requires stopping the worktree first;
 start refuses to rewrite these settings while its runtime is active.
 Status and Herdr metadata use the Docovia URL as primary and status also reports
 the SmileSnap URL as `url_alias[smilesnap.tars.achan.bot]`.

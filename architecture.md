@@ -242,10 +242,14 @@ Example profile values:
 - Worktree root on `tars`: `/home/bot/repos/sprung-worktrees`
 - Development domain: `docovia.tars.achan.bot`
 - Development domain alias: `smilesnap.tars.achan.bot`
-- Runtime selected by `sprung` or `docovia`: `docovia.tars.achan.bot` with
+- Runtime selected by `sprung` or `docovia`: `APP_NAME=Docovia` and
+  `docovia.tars.achan.bot` with
   `docovia-development-public`
-- Runtime selected by `smilesnap`: `smilesnap.tars.achan.bot` with
+- Runtime selected by `smilesnap`: `APP_NAME=SmileSnap` and
+  `smilesnap.tars.achan.bot` with
   `smilesnap-development-public`
+- `CDN_URL` uses `docovia-public` for `sprung`/`docovia` and `smilesnap-public`
+  for `smilesnap` under the S3 `us-east-2` endpoint.
 - Base port: `3100`
 - Example worktree port range: `3101-3199`
 - Runtime versions: read from repo files such as `.ruby-version` and `.nvmrc`

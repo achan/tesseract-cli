@@ -435,7 +435,9 @@ class CLITest < Minitest::Test
     assert_includes script, "export TESSERACT_APP_SHORTHAND='spr'"
     assert_includes script, "export TESSERACT_DOMAIN_ALIASES='smilesnap.tars.achan.bot'"
     assert_includes script, "export TESSERACT_RUNTIME_DOMAIN='docovia.tars.achan.bot'"
+    assert_includes script, "export TESSERACT_RUNTIME_APP_NAME='Docovia'"
     assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='docovia-development-public'"
+    assert_includes script, "export TESSERACT_CDN_BUCKET='docovia-public'"
     assert_includes script, "set -- 'worktree' 'create' 'demo' 'existing-branch'"
     assert_includes script, 'repository_command worktree create "$slug" "$@"'
     assert_includes script, 'herdr_command workspace create'
@@ -462,7 +464,9 @@ class CLITest < Minitest::Test
     assert_includes script, "export TESSERACT_APP_ID='sprung'"
     assert_includes script, "export TESSERACT_REQUESTED_APP_NAME='smilesnap'"
     assert_includes script, "export TESSERACT_RUNTIME_DOMAIN='smilesnap.tars.achan.bot'"
+    assert_includes script, "export TESSERACT_RUNTIME_APP_NAME='SmileSnap'"
     assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='smilesnap-development-public'"
+    assert_includes script, "export TESSERACT_CDN_BUCKET='smilesnap-public'"
     assert_empty stderr.string
   end
 

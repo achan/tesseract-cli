@@ -9,12 +9,15 @@ WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
 DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
 DOMAIN_ALIASES="${TESSERACT_DOMAIN_ALIASES:-}"
 RUNTIME_DOMAIN="${TESSERACT_RUNTIME_DOMAIN:-$DOMAIN}"
+RUNTIME_APP_NAME="${TESSERACT_RUNTIME_APP_NAME:-Docovia}"
 CERT_PATH="${TESSERACT_CERT_PATH:?missing TESSERACT_CERT_PATH}"
 KEY_PATH="${TESSERACT_KEY_PATH:?missing TESSERACT_KEY_PATH}"
 AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
 AGENT_NAME="${TESSERACT_AGENT_NAME:-codex}"
 HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
 S3_BUCKET_NAME_PUBLIC="${TESSERACT_S3_BUCKET_NAME_PUBLIC:-docovia-development-public}"
+CDN_BUCKET="${TESSERACT_CDN_BUCKET:-$S3_BUCKET_NAME_PUBLIC}"
+CDN_URL="//s3.us-east-2.amazonaws.com/${CDN_BUCKET}"
 
 usage() {
   cat >&2 <<USAGE
@@ -156,27 +159,33 @@ ensure_runtime_env() {
   slug="$1"
   port="$2"
   env_file="$(worktree_path "$slug")/.env.development.local"
+  ensure_env_setting "$env_file" APP_NAME "$RUNTIME_APP_NAME"
   ensure_env_setting "$env_file" APP_DOMAIN "$RUNTIME_DOMAIN"
   ensure_env_setting "$env_file" DASHBOARD_DOMAIN "app.${RUNTIME_DOMAIN}"
   ensure_env_setting "$env_file" WEBSITE_URL "https://app.${RUNTIME_DOMAIN}:${port}"
   ensure_env_setting "$env_file" API_URL "https://api.${RUNTIME_DOMAIN}:${port}"
   ensure_env_setting "$env_file" S3_BUCKET_NAME_PUBLIC "$S3_BUCKET_NAME_PUBLIC"
+  ensure_env_setting "$env_file" CDN_URL "$CDN_URL"
 }
 
 ensure_running_configuration_matches() {
   slug="$1"
   env_file="$(worktree_path "$slug")/.env.development.local"
+  configured_app_name=$(env_setting "$env_file" APP_NAME)
   configured_domain=$(env_setting "$env_file" APP_DOMAIN)
   configured_dashboard_domain=$(env_setting "$env_file" DASHBOARD_DOMAIN)
   configured_website_url=$(env_setting "$env_file" WEBSITE_URL)
   configured_api_url=$(env_setting "$env_file" API_URL)
   configured_bucket=$(env_setting "$env_file" S3_BUCKET_NAME_PUBLIC)
+  configured_cdn_url=$(env_setting "$env_file" CDN_URL)
   port=$(port_for_slug "$slug")
-  if [ "$configured_domain" != "$RUNTIME_DOMAIN" ] || \
+  if [ "$configured_app_name" != "$RUNTIME_APP_NAME" ] || \
+    [ "$configured_domain" != "$RUNTIME_DOMAIN" ] || \
     [ "$configured_dashboard_domain" != "app.${RUNTIME_DOMAIN}" ] || \
     [ "$configured_website_url" != "https://app.${RUNTIME_DOMAIN}:${port}" ] || \
     [ "$configured_api_url" != "https://api.${RUNTIME_DOMAIN}:${port}" ] || \
-    [ "$configured_bucket" != "$S3_BUCKET_NAME_PUBLIC" ]; then
+    [ "$configured_bucket" != "$S3_BUCKET_NAME_PUBLIC" ] || \
+    [ "$configured_cdn_url" != "$CDN_URL" ]; then
     echo "worktree ${APP_SHORTHAND}/${slug} is already running with a different runtime configuration" >&2
     echo "run 'tesseract worktree stop ${REQUESTED_APP_NAME} ${slug}', then 'tesseract worktree start ${REQUESTED_APP_NAME} ${slug}'" >&2
     exit 1

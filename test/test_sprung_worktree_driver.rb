@@ -35,11 +35,16 @@ class SprungWorktreeDriverTest < Minitest::Test
       assert_includes log, "pane run w7:p1 TESSERACT_LIVE_ACTIVITY_APP=sprung codex --yolo"
 
       env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_NAME=Docovia\n"
       assert_includes env, "APP_DOMAIN=docovia.example.test\n"
       assert_includes env, "DASHBOARD_DOMAIN=app.docovia.example.test\n"
       assert_includes env, "WEBSITE_URL=https://app.docovia.example.test:3110\n"
       assert_includes env, "API_URL=https://api.docovia.example.test:3110\n"
       assert_includes env, "S3_BUCKET_NAME_PUBLIC=docovia-development-public\n"
+      assert_includes env, "CDN_URL=//s3.us-east-2.amazonaws.com/docovia-public\n"
+      assert_includes env, "THEME_GRADIENT_END_COLOR=\"#3899c2\"\n"
+      assert_includes env, "THEME_GRADIENT_START_COLOR=\"#09937e\"\n"
+      assert_includes env, "THEME_TOP_BAR_COLOR=\"#144c5d\"\n"
       assert_includes env, "PORT=3110\n"
       assert_includes env, "DATABASE_URL=postgres://bot:dev@localhost/sprung_demo\n"
       assert_includes env, "REDIS_URL=redis://localhost:6379/42\n"
@@ -52,18 +57,28 @@ class SprungWorktreeDriverTest < Minitest::Test
       environment = fixture.fetch(:environment).merge(
         "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
         "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
-        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+        "TESSERACT_RUNTIME_APP_NAME" => "SmileSnap",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public",
+        "TESSERACT_CDN_BUCKET" => "smilesnap-public",
+        "TESSERACT_THEME_GRADIENT_END_COLOR" => "#57c2e6",
+        "TESSERACT_THEME_GRADIENT_START_COLOR" => "#327aba",
+        "TESSERACT_THEME_TOP_BAR_COLOR" => "#327aba"
       )
 
       _stdout, stderr, status = Open3.capture3(environment, "bash", DRIVER, "worktree", "start", "demo")
 
       assert status.success?, stderr
       env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_NAME=SmileSnap\n"
       assert_includes env, "APP_DOMAIN=smilesnap.example.test\n"
       assert_includes env, "DASHBOARD_DOMAIN=app.smilesnap.example.test\n"
       assert_includes env, "WEBSITE_URL=https://app.smilesnap.example.test:3110\n"
       assert_includes env, "API_URL=https://api.smilesnap.example.test:3110\n"
       assert_includes env, "S3_BUCKET_NAME_PUBLIC=smilesnap-development-public\n"
+      assert_includes env, "CDN_URL=//s3.us-east-2.amazonaws.com/smilesnap-public\n"
+      assert_includes env, "THEME_GRADIENT_END_COLOR=\"#57c2e6\"\n"
+      assert_includes env, "THEME_GRADIENT_START_COLOR=\"#327aba\"\n"
+      assert_includes env, "THEME_TOP_BAR_COLOR=\"#327aba\"\n"
     end
   end
 
@@ -75,14 +90,22 @@ class SprungWorktreeDriverTest < Minitest::Test
       smile_environment = fixture.fetch(:environment).merge(
         "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
         "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
-        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+        "TESSERACT_RUNTIME_APP_NAME" => "SmileSnap",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public",
+        "TESSERACT_CDN_BUCKET" => "smilesnap-public",
+        "TESSERACT_THEME_GRADIENT_END_COLOR" => "#57c2e6",
+        "TESSERACT_THEME_GRADIENT_START_COLOR" => "#327aba",
+        "TESSERACT_THEME_TOP_BAR_COLOR" => "#327aba"
       )
       _stdout, stderr, status = Open3.capture3(smile_environment, "bash", DRIVER, "worktree", "start", "demo")
 
       assert status.success?, stderr
       env = File.read(File.join(fixture.fetch(:worktree), ".env.development.local"))
+      assert_includes env, "APP_NAME=SmileSnap\n"
       assert_includes env, "APP_DOMAIN=smilesnap.example.test\n"
       assert_includes env, "S3_BUCKET_NAME_PUBLIC=smilesnap-development-public\n"
+      assert_includes env, "CDN_URL=//s3.us-east-2.amazonaws.com/smilesnap-public\n"
+      assert_includes env, "THEME_GRADIENT_END_COLOR=\"#57c2e6\"\n"
       assert_equal 1, env.scan(/^APP_DOMAIN=/).length
       assert_equal 1, env.scan(/^S3_BUCKET_NAME_PUBLIC=/).length
     end
@@ -95,7 +118,12 @@ class SprungWorktreeDriverTest < Minitest::Test
       smile_environment = fixture.fetch(:environment).merge(
         "TESSERACT_REQUESTED_APP_NAME" => "smilesnap",
         "TESSERACT_RUNTIME_DOMAIN" => "smilesnap.example.test",
-        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public"
+        "TESSERACT_RUNTIME_APP_NAME" => "SmileSnap",
+        "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "smilesnap-development-public",
+        "TESSERACT_CDN_BUCKET" => "smilesnap-public",
+        "TESSERACT_THEME_GRADIENT_END_COLOR" => "#57c2e6",
+        "TESSERACT_THEME_GRADIENT_START_COLOR" => "#327aba",
+        "TESSERACT_THEME_TOP_BAR_COLOR" => "#327aba"
       )
 
       _stdout, stderr, status = Open3.capture3(smile_environment, "bash", DRIVER, "worktree", "start", "demo")
@@ -195,11 +223,16 @@ class SprungWorktreeDriverTest < Minitest::Test
         <<~ENV
           PORT=3110
           WEBPACKER_DEV_SERVER_PORT=4110
+          APP_NAME=Docovia
           APP_DOMAIN=docovia.example.test
           DASHBOARD_DOMAIN=app.docovia.example.test
           WEBSITE_URL=https://app.docovia.example.test:3110
           API_URL=https://api.docovia.example.test:3110
           S3_BUCKET_NAME_PUBLIC=docovia-development-public
+          CDN_URL=//s3.us-east-2.amazonaws.com/docovia-public
+          THEME_GRADIENT_END_COLOR="#3899c2"
+          THEME_GRADIENT_START_COLOR="#09937e"
+          THEME_TOP_BAR_COLOR="#144c5d"
           DATABASE_URL=postgres://bot:dev@localhost/sprung_demo
           REDIS_URL=redis://localhost:6379/42
           CUSTOM_VALUE=preserved
@@ -230,7 +263,12 @@ class SprungWorktreeDriverTest < Minitest::Test
         "TESSERACT_DOMAIN" => "docovia.example.test",
         "TESSERACT_DOMAIN_ALIASES" => "smilesnap.example.test",
         "TESSERACT_RUNTIME_DOMAIN" => "docovia.example.test",
+        "TESSERACT_RUNTIME_APP_NAME" => "Docovia",
         "TESSERACT_S3_BUCKET_NAME_PUBLIC" => "docovia-development-public",
+        "TESSERACT_CDN_BUCKET" => "docovia-public",
+        "TESSERACT_THEME_GRADIENT_END_COLOR" => "#3899c2",
+        "TESSERACT_THEME_GRADIENT_START_COLOR" => "#09937e",
+        "TESSERACT_THEME_TOP_BAR_COLOR" => "#144c5d",
         "TESSERACT_CERT_PATH" => File.join(worktree, "app.crt"),
         "TESSERACT_KEY_PATH" => File.join(worktree, "app.key"),
         "TESSERACT_AGENT_COMMAND" => "codex --yolo",

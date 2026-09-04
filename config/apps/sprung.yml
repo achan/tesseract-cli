@@ -14,10 +14,31 @@ runtime_domains:
   sprung: docovia.tars.achan.bot
   docovia: docovia.tars.achan.bot
   smilesnap: smilesnap.tars.achan.bot
+runtime_app_names:
+  sprung: Docovia
+  docovia: Docovia
+  smilesnap: SmileSnap
 public_s3_buckets:
   sprung: docovia-development-public
   docovia: docovia-development-public
   smilesnap: smilesnap-development-public
+cdn_buckets:
+  sprung: docovia-public
+  docovia: docovia-public
+  smilesnap: smilesnap-public
+runtime_themes:
+  sprung:
+    THEME_GRADIENT_END_COLOR: "#3899c2"
+    THEME_GRADIENT_START_COLOR: "#09937e"
+    THEME_TOP_BAR_COLOR: "#144c5d"
+  docovia:
+    THEME_GRADIENT_END_COLOR: "#3899c2"
+    THEME_GRADIENT_START_COLOR: "#09937e"
+    THEME_TOP_BAR_COLOR: "#144c5d"
+  smilesnap:
+    THEME_GRADIENT_END_COLOR: "#57c2e6"
+    THEME_GRADIENT_START_COLOR: "#327aba"
+    THEME_TOP_BAR_COLOR: "#327aba"
 base_port: 3100
 port_count: 100
 database_prefix: sprung_dev_worktree

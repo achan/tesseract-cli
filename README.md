@@ -327,6 +327,9 @@ SmileSnap domains, `smilesnap-development-public`, and its corresponding S3
 `CDN_URL` bucket (`smilesnap-public`; `docovia-public` for Docovia). Switching
 requires stopping the worktree first;
 start refuses to rewrite these settings while its runtime is active.
+The matching `THEME_GRADIENT_START_COLOR`, `THEME_GRADIENT_END_COLOR`, and
+`THEME_TOP_BAR_COLOR` values come from the Porter `docovia-prod` and
+`smilesnap-prod` environment groups.
 Status and Herdr metadata use the Docovia URL as primary and status also reports
 the SmileSnap URL as `url_alias[smilesnap.tars.achan.bot]`.
 

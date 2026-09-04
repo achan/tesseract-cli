@@ -18,6 +18,9 @@ HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
 S3_BUCKET_NAME_PUBLIC="${TESSERACT_S3_BUCKET_NAME_PUBLIC:-docovia-development-public}"
 CDN_BUCKET="${TESSERACT_CDN_BUCKET:-$S3_BUCKET_NAME_PUBLIC}"
 CDN_URL="//s3.us-east-2.amazonaws.com/${CDN_BUCKET}"
+THEME_GRADIENT_END_COLOR="${TESSERACT_THEME_GRADIENT_END_COLOR:?missing TESSERACT_THEME_GRADIENT_END_COLOR}"
+THEME_GRADIENT_START_COLOR="${TESSERACT_THEME_GRADIENT_START_COLOR:?missing TESSERACT_THEME_GRADIENT_START_COLOR}"
+THEME_TOP_BAR_COLOR="${TESSERACT_THEME_TOP_BAR_COLOR:?missing TESSERACT_THEME_TOP_BAR_COLOR}"
 
 usage() {
   cat >&2 <<USAGE
@@ -166,6 +169,9 @@ ensure_runtime_env() {
   ensure_env_setting "$env_file" API_URL "https://api.${RUNTIME_DOMAIN}:${port}"
   ensure_env_setting "$env_file" S3_BUCKET_NAME_PUBLIC "$S3_BUCKET_NAME_PUBLIC"
   ensure_env_setting "$env_file" CDN_URL "$CDN_URL"
+  ensure_env_setting "$env_file" THEME_GRADIENT_END_COLOR "\"$THEME_GRADIENT_END_COLOR\""
+  ensure_env_setting "$env_file" THEME_GRADIENT_START_COLOR "\"$THEME_GRADIENT_START_COLOR\""
+  ensure_env_setting "$env_file" THEME_TOP_BAR_COLOR "\"$THEME_TOP_BAR_COLOR\""
 }
 
 ensure_running_configuration_matches() {
@@ -178,6 +184,9 @@ ensure_running_configuration_matches() {
   configured_api_url=$(env_setting "$env_file" API_URL)
   configured_bucket=$(env_setting "$env_file" S3_BUCKET_NAME_PUBLIC)
   configured_cdn_url=$(env_setting "$env_file" CDN_URL)
+  configured_theme_gradient_end_color=$(env_setting "$env_file" THEME_GRADIENT_END_COLOR)
+  configured_theme_gradient_start_color=$(env_setting "$env_file" THEME_GRADIENT_START_COLOR)
+  configured_theme_top_bar_color=$(env_setting "$env_file" THEME_TOP_BAR_COLOR)
   port=$(port_for_slug "$slug")
   if [ "$configured_app_name" != "$RUNTIME_APP_NAME" ] || \
     [ "$configured_domain" != "$RUNTIME_DOMAIN" ] || \
@@ -185,7 +194,10 @@ ensure_running_configuration_matches() {
     [ "$configured_website_url" != "https://app.${RUNTIME_DOMAIN}:${port}" ] || \
     [ "$configured_api_url" != "https://api.${RUNTIME_DOMAIN}:${port}" ] || \
     [ "$configured_bucket" != "$S3_BUCKET_NAME_PUBLIC" ] || \
-    [ "$configured_cdn_url" != "$CDN_URL" ]; then
+    [ "$configured_cdn_url" != "$CDN_URL" ] || \
+    [ "$configured_theme_gradient_end_color" != "$THEME_GRADIENT_END_COLOR" ] || \
+    [ "$configured_theme_gradient_start_color" != "$THEME_GRADIENT_START_COLOR" ] || \
+    [ "$configured_theme_top_bar_color" != "$THEME_TOP_BAR_COLOR" ]; then
     echo "worktree ${APP_SHORTHAND}/${slug} is already running with a different runtime configuration" >&2
     echo "run 'tesseract worktree stop ${REQUESTED_APP_NAME} ${slug}', then 'tesseract worktree start ${REQUESTED_APP_NAME} ${slug}'" >&2
     exit 1

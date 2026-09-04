@@ -93,6 +93,14 @@ class ConfigTest < Minitest::Test
     assert_equal "Docovia", app.runtime_app_name
     assert_equal "docovia-development-public", app.public_s3_bucket
     assert_equal "docovia-public", app.cdn_bucket
+    assert_equal(
+      {
+        "THEME_GRADIENT_END_COLOR" => "#3899c2",
+        "THEME_GRADIENT_START_COLOR" => "#09937e",
+        "THEME_TOP_BAR_COLOR" => "#144c5d"
+      },
+      app.runtime_theme
+    )
     assert_equal "herdr", app.session_driver
     assert_equal 3100, app.base_port
     assert_equal [
@@ -120,6 +128,9 @@ class ConfigTest < Minitest::Test
     assert_equal "SmileSnap", @config.app("smilesnap").runtime_app_name
     assert_equal "smilesnap-development-public", @config.app("smilesnap").public_s3_bucket
     assert_equal "smilesnap-public", @config.app("smilesnap").cdn_bucket
+    assert_equal "#57c2e6", @config.app("smilesnap").runtime_theme.fetch("THEME_GRADIENT_END_COLOR")
+    assert_equal "#327aba", @config.app("smilesnap").runtime_theme.fetch("THEME_GRADIENT_START_COLOR")
+    assert_equal "#327aba", @config.app("smilesnap").runtime_theme.fetch("THEME_TOP_BAR_COLOR")
   end
 
   def test_rewrites_sprung_primary_and_alias_domains_for_case_host

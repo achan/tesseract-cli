@@ -250,6 +250,8 @@ Example profile values:
   `smilesnap-development-public`
 - `CDN_URL` uses `docovia-public` for `sprung`/`docovia` and `smilesnap-public`
   for `smilesnap` under the S3 `us-east-2` endpoint.
+- Theme gradient and top-bar colors mirror the matching Porter production
+  environment group (`docovia-prod` or `smilesnap-prod`).
 - Base port: `3100`
 - Example worktree port range: `3101-3199`
 - Runtime versions: read from repo files such as `.ruby-version` and `.nvmrc`

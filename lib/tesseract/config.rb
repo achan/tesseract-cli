@@ -224,7 +224,7 @@ module Tesseract
   class AppProfile
     attr_reader :id, :requested_name, :app_aliases, :shorthand, :repo, :main_path,
       :worktree_root, :domain, :domain_aliases, :runtime_domain, :runtime_app_name,
-      :public_s3_bucket, :cdn_bucket, :base_port,
+      :public_s3_bucket, :cdn_bucket, :runtime_theme, :base_port,
       :port_count, :database_prefix, :env_shared_path, :pguser, :runtime_specs,
       :setup_commands, :env_overrides, :url_template, :dns_zone,
       :worktree_driver, :session_driver, :default_branch, :fetch_on_create
@@ -245,6 +245,7 @@ module Tesseract
       @runtime_app_name = data.fetch("runtime_app_names", {})[@requested_name]
       @public_s3_bucket = data.fetch("public_s3_buckets", {})[@requested_name]
       @cdn_bucket = data.fetch("cdn_buckets", {})[@requested_name]
+      @runtime_theme = data.fetch("runtime_themes", {}).fetch(@requested_name, {})
       @worktree_root = data["worktree_root"]
       @worktree_driver = data.fetch("worktree_driver", "repository")
       unless WorktreeDrivers::Registry.known_id?(@worktree_driver)

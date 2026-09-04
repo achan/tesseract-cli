@@ -438,6 +438,9 @@ class CLITest < Minitest::Test
     assert_includes script, "export TESSERACT_RUNTIME_APP_NAME='Docovia'"
     assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='docovia-development-public'"
     assert_includes script, "export TESSERACT_CDN_BUCKET='docovia-public'"
+    assert_includes script, "export TESSERACT_THEME_GRADIENT_END_COLOR='#3899c2'"
+    assert_includes script, "export TESSERACT_THEME_GRADIENT_START_COLOR='#09937e'"
+    assert_includes script, "export TESSERACT_THEME_TOP_BAR_COLOR='#144c5d'"
     assert_includes script, "set -- 'worktree' 'create' 'demo' 'existing-branch'"
     assert_includes script, 'repository_command worktree create "$slug" "$@"'
     assert_includes script, 'herdr_command workspace create'
@@ -467,6 +470,9 @@ class CLITest < Minitest::Test
     assert_includes script, "export TESSERACT_RUNTIME_APP_NAME='SmileSnap'"
     assert_includes script, "export TESSERACT_S3_BUCKET_NAME_PUBLIC='smilesnap-development-public'"
     assert_includes script, "export TESSERACT_CDN_BUCKET='smilesnap-public'"
+    assert_includes script, "export TESSERACT_THEME_GRADIENT_END_COLOR='#57c2e6'"
+    assert_includes script, "export TESSERACT_THEME_GRADIENT_START_COLOR='#327aba'"
+    assert_includes script, "export TESSERACT_THEME_TOP_BAR_COLOR='#327aba'"
     assert_empty stderr.string
   end
 

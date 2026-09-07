@@ -662,12 +662,13 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/Users/bot/repos/mobile-dashboard'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'create' 'cost-calculator'"
+    assert_includes script, "export TESSERACT_APP_ID='mobile-dashboard'"
+    assert_includes script, "export TESSERACT_WORKTREE_ROOT='/Users/bot/repos/mobile-dashboard-worktrees'"
+    assert_includes script, "repository_command worktree create"
     assert_empty stderr.string
   end
 
-  def test_mobile_dashboard_worktree_start_dispatches_api_url_to_repository_adapter
+  def test_mobile_dashboard_worktree_start_dispatches_api_url_to_herdr_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -683,8 +684,9 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/Users/bot/repos/mobile-dashboard'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'cost-calculator' '--api-url' 'https://api.docovia.tars.achan.bot:3113'"
+    assert_includes script, "set -- 'worktree' 'start' 'cost-calculator' '--api-url' 'https://api.docovia.tars.achan.bot:3113'"
+    assert_includes script, "herdr_command workspace create"
+    assert_includes script, "npm start -- --port"
     assert_empty stderr.string
   end
 

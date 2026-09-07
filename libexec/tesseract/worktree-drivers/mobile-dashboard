@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_ID="${TESSERACT_APP_ID:-mobile-dashboard}"
+APP_SHORTHAND="${TESSERACT_APP_SHORTHAND:-$APP_ID}"
+MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
+WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
+PORT_START="${TESSERACT_PORT_START:-8081}"
+PORT_COUNT="${TESSERACT_PORT_COUNT:-100}"
+AGENT_COMMAND="${TESSERACT_AGENT_COMMAND:-codex --yolo}"
+AGENT_NAME="${TESSERACT_AGENT_NAME:-codex}"
+HERDR_SESSION_NAME="${TESSERACT_HERDR_SESSION:-default}"
+PORT_END=$((PORT_START + PORT_COUNT - 1))
+
+usage() {
+  cat >&2 <<USAGE
+Usage:
+  tesseract worktree create ${APP_ID} <slug> [branch]
+  tesseract worktree start ${APP_ID} <slug> [--api-url URL]
+  tesseract worktree stop ${APP_ID} <slug>
+  tesseract worktree status ${APP_ID} <slug>
+  tesseract worktree remove ${APP_ID} <slug> [--force]
+USAGE
+  exit 1
+}
+
+validate_slug() {
+  case "$1" in
+    ""|*[!A-Za-z0-9._-]*)
+      echo "invalid worktree slug: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+sanitize_slug() {
+  printf "%s" "$1" | tr '-' '_' | tr -cd '[:alnum:]_'
+}
+
+worktree_path() {
+  printf "%s/%s" "$WORKTREE_ROOT" "$1"
+}
+
+legacy_session_name() {
+  printf "mobile_dashboard_%s" "$(sanitize_slug "$1")"
+}
+
+workspace_identity() {
+  printf "%s/%s" "$APP_SHORTHAND" "$1"
+}
+
+legacy_workspace_label() {
+  printf "%s/%s" "$APP_ID" "$1"
+}
+
+repository_command() {
+  if [ ! -x "$MAIN_PATH/bin/tesseract" ]; then
+    echo "missing repo-local $MAIN_PATH/bin/tesseract" >&2
+    exit 1
+  fi
+  (cd "$MAIN_PATH" && "$MAIN_PATH/bin/tesseract" "$@")
+}
+
+normalize_api() {
+  node - "$1" <<'NODE'
+const value = process.argv[2]
+let url
+try { url = new URL(value) } catch { process.exit(2) }
+if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
+    !url.hostname.startsWith('api.') || !['', '/', '/v2', '/v2/'].includes(url.pathname)) process.exit(2)
+console.log(`https://${url.host}`)
+NODE
+}
+
+herdr_command() {
+  HERDR_SESSION="$HERDR_SESSION_NAME" herdr "$@"
+}
+
+load_workspace() {
+  slug="$1"
+  identity=$(workspace_identity "$slug")
+  legacy_label=$(legacy_workspace_label "$slug")
+  workspace_json=$(herdr_command workspace list)
+  WORKSPACE_COUNT=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '[.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      )] | length')
+  if [ "$WORKSPACE_COUNT" -gt 1 ]; then
+    echo "multiple Herdr workspaces found for $identity" >&2
+    exit 1
+  fi
+  WORKSPACE_ID=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .workspace_id')
+  WORKSPACE_LABEL=$(printf "%s" "$workspace_json" |
+    jq -r --arg identity "$identity" --arg legacy "$legacy_label" \
+      '.result.workspaces[] | select(
+        .label == $legacy or
+        .label == $identity or
+        (.label | startswith($identity + "\n"))
+      ) | .label')
+}
+
+verify_workspace_path() {
+  workspace_id="$1"
+  path="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  pane_count=$(printf "%s" "$panes_json" | jq -r '.result.panes | length')
+  mismatch_count=$(printf "%s" "$panes_json" |
+    jq -r --arg path "$path" '[.result.panes[] | select(.cwd != $path)] | length')
+  if [ "$pane_count" -eq 0 ] || [ "$mismatch_count" -ne 0 ]; then
+    echo "Herdr workspace $workspace_id is not rooted at $path" >&2
+    exit 1
+  fi
+}
+
+refresh_workspace_metadata() {
+  workspace_id="$1"
+  url="$2"
+  panes_json=$(herdr_command pane list --workspace "$workspace_id")
+  printf "%s" "$panes_json" | jq -r '.result.panes[].pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata \
+        "$pane_id" --source tesseract --token "url=$url" >/dev/null
+    done
+  printf "%s" "$panes_json" | jq -r '.result.panes[] | select(.agent != null) | .pane_id' |
+    while IFS= read -r pane_id; do
+      herdr_command pane report-metadata \
+        "$pane_id" --source tesseract --display-agent "$AGENT_NAME" >/dev/null
+    done
+}
+
+runtime_api_url() {
+  sed -n 's/^api_url=//p' "$(worktree_path "$1")/.tesseract/runtime" 2>/dev/null | head -1
+}
+
+runtime_port() {
+  sed -n 's/^port=//p' "$(worktree_path "$1")/.tesseract/runtime" 2>/dev/null | head -1
+}
+
+prepare_runtime() {
+  slug="$1"
+  api_input="$2"
+  path=$(worktree_path "$slug")
+  api_origin=$(normalize_api "$api_input") || {
+    echo "invalid API URL: $api_input" >&2
+    exit 1
+  }
+  api_url="$api_origin/v2"
+
+  mkdir -p "$path/.tesseract"
+  if [ -f "$MAIN_PATH/.env" ]; then
+    cp "$MAIN_PATH/.env" "$path/.env"
+  fi
+  touch "$path/.env"
+  oauth_client_id=$(sed -n 's/^EXPO_PUBLIC_OAUTH_CLIENT_ID=//p' "$path/.env" | tail -1)
+  variant=$(sed -n 's/^EXPO_PUBLIC_VARIABLE_NAME=//p' "$path/.env" | tail -1)
+  variant=${variant:-docovia}
+  variant_env_prefix=$(printf "%s" "$variant" | tr '[:lower:]-' '[:upper:]_')
+  variant_api_variable="EXPO_PUBLIC_${variant_env_prefix}_API_BASE_URL"
+  env_tmp="$path/.tesseract/env.tmp"
+  grep -Ev "^(${variant_api_variable}|EXPO_PUBLIC_(DOCOVIA_(CLIENT_ID|AUTHORIZE_URL|TOKEN_URL|REVOKE_URL)|API_BASE_URL|IOS_CLIENT_ID|OAUTH_CLIENT_ID|VARIABLE_NAME))=" \
+    "$path/.env" > "$env_tmp" || true
+  printf 'EXPO_PUBLIC_VARIABLE_NAME=%s\n%s=%s\n' \
+    "$variant" "$variant_api_variable" "$api_origin" >> "$env_tmp"
+  if [ -n "$oauth_client_id" ]; then
+    printf 'EXPO_PUBLIC_OAUTH_CLIENT_ID=%s\n' "$oauth_client_id" >> "$env_tmp"
+  fi
+  mv "$env_tmp" "$path/.env"
+  chmod 0600 "$path/.env"
+
+  lock_hash=$(shasum -a 256 "$path/package-lock.json" | awk '{print $1}')
+  installed_hash=$(cat "$path/.tesseract/package-lock.sha256" 2>/dev/null || true)
+  if [ ! -d "$path/node_modules" ] || [ "$lock_hash" != "$installed_hash" ]; then
+    (cd "$path" && npm ci)
+    printf '%s\n' "$lock_hash" > "$path/.tesseract/package-lock.sha256"
+  fi
+
+  port=$(runtime_port "$slug")
+  case "$port" in
+    ""|*[!0-9]*) port="" ;;
+    *)
+      if [ "$port" -lt "$PORT_START" ] || [ "$port" -gt "$PORT_END" ] ||
+         lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        port=""
+      fi
+      ;;
+  esac
+  if [ -z "$port" ]; then
+    candidate="$PORT_START"
+    while [ "$candidate" -le "$PORT_END" ]; do
+      if ! lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
+        port="$candidate"
+        break
+      fi
+      candidate=$((candidate + 1))
+    done
+  fi
+  if [ -z "$port" ]; then
+    echo "no free Metro port in ${PORT_START}..${PORT_END}" >&2
+    exit 1
+  fi
+
+  printf 'api_url=%s\nport=%s\n' "$api_url" "$port" > "$path/.tesseract/runtime"
+  PREPARED_API_URL="$api_url"
+  PREPARED_PORT="$port"
+}
+
+emit_herdr_runtime() {
+  slug="$1"
+  path="$2"
+  api_url="$3"
+  port="$4"
+  workspace_id="$5"
+  identity=$(workspace_identity "$slug")
+  echo "path=$path"
+  echo "api_url=$api_url"
+  echo "port=$port"
+  echo "url=http://localhost:$port"
+  echo "running=yes"
+  echo "runtime=herdr"
+  echo "session=$HERDR_SESSION_NAME"
+  echo "workspace_id=$workspace_id"
+  echo "target=${HERDR_SESSION_NAME}:${identity}"
+}
+
+rollback_workspace() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -ne 0 ]; then
+    workspace_id="${CREATED_WORKSPACE_ID:-}"
+    [ -z "$workspace_id" ] || herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
+  fi
+  exit "$code"
+}
+
+start_worktree() {
+  slug="$1"
+  shift
+  api_input="https://api.docoviastage.com"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --api-url)
+        [ "$#" -ge 2 ] || usage
+        api_input="$2"
+        shift 2
+        ;;
+      --api-url=*)
+        api_input=${1#*=}
+        shift
+        ;;
+      *) usage ;;
+    esac
+  done
+
+  path=$(worktree_path "$slug")
+  if [ ! -d "$path" ] || ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "worktree is missing: $path" >&2
+    exit 1
+  fi
+
+  identity=$(workspace_identity "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+  load_workspace "$slug"
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    echo "legacy tmux session is still running: $legacy_session; stop it before starting Herdr" >&2
+    exit 1
+  fi
+
+  requested_origin=$(normalize_api "$api_input") || {
+    echo "invalid API URL: $api_input" >&2
+    exit 1
+  }
+  requested_api_url="$requested_origin/v2"
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    api_url=$(runtime_api_url "$slug")
+    port=$(runtime_port "$slug")
+    if [ "$api_url" != "$requested_api_url" ]; then
+      echo "worktree ${APP_SHORTHAND}/${slug} is already running with a different API URL" >&2
+      echo "stop it before changing the API URL" >&2
+      exit 1
+    fi
+    if [ "$WORKSPACE_LABEL" != "$identity" ]; then
+      herdr_command workspace rename "$WORKSPACE_ID" "$identity" >/dev/null
+    fi
+    refresh_workspace_metadata "$WORKSPACE_ID" "http://localhost:$port"
+    echo "workspace already running: $identity"
+    emit_herdr_runtime "$slug" "$path" "$api_url" "$port" "$WORKSPACE_ID"
+    return
+  fi
+
+  prepare_runtime "$slug" "$api_input"
+  api_url="$PREPARED_API_URL"
+  port="$PREPARED_PORT"
+  printf -v metro_command 'npm start -- --port %q' "$port"
+  printf -v agent_command \
+    'TESSERACT_LIVE_ACTIVITY_APP=%q %s' \
+    "$APP_ID" "$AGENT_COMMAND"
+
+  CREATED_WORKSPACE_ID=""
+  trap rollback_workspace EXIT
+  workspace_create_json=$(herdr_command workspace create \
+    --cwd "$path" \
+    --label "$identity" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  CREATED_WORKSPACE_ID=$(printf "%s" "$workspace_create_json" |
+    jq -er '.result.workspace.workspace_id')
+  code_tab_id=$(printf "%s" "$workspace_create_json" | jq -er '.result.tab.tab_id')
+  root_pane_id=$(printf "%s" "$workspace_create_json" | jq -er '.result.root_pane.pane_id')
+  herdr_command tab rename "$code_tab_id" Code >/dev/null
+  split_json=$(herdr_command pane split \
+    --pane "$root_pane_id" \
+    --direction right \
+    --ratio 0.5 \
+    --cwd "$path" \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  terminal_pane_id=$(printf "%s" "$split_json" | jq -er '.result.pane.pane_id')
+  herdr_command pane rename "$root_pane_id" Codex >/dev/null
+  herdr_command pane rename "$terminal_pane_id" Terminal >/dev/null
+  servers_tab_json=$(herdr_command tab create \
+    --workspace "$CREATED_WORKSPACE_ID" \
+    --cwd "$path" \
+    --label Servers \
+    --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" \
+    --no-focus)
+  metro_pane_id=$(printf "%s" "$servers_tab_json" | jq -er '.result.root_pane.pane_id')
+  herdr_command pane rename "$metro_pane_id" Metro >/dev/null
+  herdr_command pane run "$root_pane_id" "$agent_command" >/dev/null
+  herdr_command pane run "$metro_pane_id" "$metro_command" >/dev/null
+  herdr_command pane report-metadata \
+    "$root_pane_id" --source tesseract --display-agent "$AGENT_NAME" \
+    --token "url=http://localhost:$port" >/dev/null
+  herdr_command pane report-metadata \
+    "$terminal_pane_id" --source tesseract --token "url=http://localhost:$port" >/dev/null
+  herdr_command pane report-metadata \
+    "$metro_pane_id" --source tesseract --token "url=http://localhost:$port" >/dev/null
+  trap - EXIT
+
+  echo "started $identity"
+  emit_herdr_runtime "$slug" "$path" "$api_url" "$port" "$CREATED_WORKSPACE_ID"
+}
+
+stop_worktree() {
+  slug="$1"
+  identity=$(workspace_identity "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+  stopped=false
+  load_workspace "$slug"
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    herdr_command workspace close "$WORKSPACE_ID" >/dev/null
+    echo "stopped $identity"
+    stopped=true
+  fi
+  if tmux has-session -t "=$legacy_session" 2>/dev/null; then
+    tmux kill-session -t "=$legacy_session"
+    echo "stopped legacy tmux session $legacy_session"
+    stopped=true
+  fi
+  if [ "$stopped" = false ]; then
+    echo "not running: $identity"
+  fi
+}
+
+status_worktree() {
+  slug="$1"
+  path=$(worktree_path "$slug")
+  identity=$(workspace_identity "$slug")
+  legacy_session=$(legacy_session_name "$slug")
+  api_url=$(runtime_api_url "$slug")
+  port=$(runtime_port "$slug")
+
+  echo "app=$APP_ID"
+  echo "slug=$slug"
+  echo "path=$path"
+  if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "registered=yes"
+    echo "branch=$(git -C "$path" branch --show-current)"
+  else
+    echo "registered=no"
+  fi
+  echo "api_url=${api_url:--}"
+  echo "port=${port:--}"
+  if [ -n "$port" ]; then
+    echo "url=http://localhost:$port"
+  else
+    echo "url=-"
+  fi
+
+  load_workspace "$slug"
+  legacy_running=false
+  tmux has-session -t "=$legacy_session" 2>/dev/null && legacy_running=true
+  if [ "$WORKSPACE_COUNT" -eq 1 ] && [ "$legacy_running" = true ]; then
+    echo "both Herdr and legacy tmux runtimes exist for ${APP_ID}/${slug}" >&2
+    exit 1
+  fi
+  if [ "$WORKSPACE_COUNT" -eq 1 ]; then
+    verify_workspace_path "$WORKSPACE_ID" "$path"
+    echo "running=yes"
+    echo "runtime=herdr"
+    echo "session=$HERDR_SESSION_NAME"
+    echo "workspace_id=$WORKSPACE_ID"
+    echo "target=${HERDR_SESSION_NAME}:${identity}"
+  elif [ "$legacy_running" = true ]; then
+    echo "running=yes"
+    echo "runtime=tmux"
+    echo "tmux_session=$legacy_session"
+    echo "target=$legacy_session"
+    echo "legacy_runtime=yes"
+  else
+    echo "running=no"
+    echo "runtime=none"
+    echo "target=-"
+  fi
+  if [ -n "$port" ] && curl -fsS --max-time 2 "http://127.0.0.1:$port/status" >/dev/null 2>&1; then
+    echo "health=healthy"
+  elif [ "$WORKSPACE_COUNT" -eq 1 ] || [ "$legacy_running" = true ]; then
+    echo "health=starting"
+  else
+    echo "health=stopped"
+  fi
+}
+
+remove_worktree() {
+  slug="$1"
+  force="${2:-}"
+  stop_worktree "$slug"
+  if [ "$force" = "--force" ]; then
+    repository_command worktree remove "$slug" --force
+  else
+    repository_command worktree remove "$slug"
+  fi
+}
+
+[ "${1:-}" = "worktree" ] || usage
+action="${2:-}"
+shift 2 || usage
+slug="${1:-}"
+validate_slug "$slug"
+
+case "$action" in
+  create) repository_command worktree create "$@" ;;
+  start) start_worktree "$@" ;;
+  stop) [ "$#" -eq 1 ] || usage; stop_worktree "$slug" ;;
+  status) [ "$#" -eq 1 ] || usage; status_worktree "$slug" ;;
+  remove) [ "$#" -le 2 ] || usage; remove_worktree "$@" ;;
+  *) usage ;;
+esac

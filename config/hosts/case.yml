@@ -10,6 +10,7 @@ pages_dir: /Users/bot/pages
 pages_domain: pages-case.achan.bot
 pages_tunnel_token_path: /Users/bot/.config/tesseract/pages-tunnel.token
 extra_path:
+  - /Users/bot/.local/bin
   - /Users/bot/.homebrew/bin
   - /Users/bot/.homebrew/sbin
 app_domain_suffix: case.achan.bot

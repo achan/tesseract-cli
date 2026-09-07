@@ -1,7 +1,17 @@
 id: flexday
 repo: git@github.com:FlexdayInc/flexday
 main_path: /home/bot/repos/flexday
+worktree_root: /home/bot/repos/flexday-worktrees
+worktree_driver: flexday
+session_driver: herdr
 domain: flexday.tars.achan.bot
+base_port: 4001
+port_count: 99
+database: false
+url_template: https://{domain}:{port}
+processes:
+  web: pnpm exec next dev
+  agent: codex --yolo
 dns_records:
   - "{domain}"
 env_shared_path: /home/bot/repos/flexday/.env.local

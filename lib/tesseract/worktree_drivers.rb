@@ -8,7 +8,8 @@ module Tesseract
       BUILTIN_DRIVERS = %w[repository git].freeze
       REQUIRED_COMMANDS = {
         "sprung" => %w[git herdr jq mise tmux],
-        "signatures" => %w[createdb git herdr jq mise ss]
+        "signatures" => %w[createdb git herdr jq mise ss],
+        "flexday" => %w[git herdr jq mise tmux]
       }.freeze
 
       def initialize(root)

@@ -158,8 +158,12 @@ class ConfigTest < Minitest::Test
     assert_equal "flexday.tars.achan.bot", app.domain
     assert_equal "/home/bot/repos/flexday", app.main_path
     assert_equal "/home/bot/repos/flexday/.env.local", app.env_shared_path
-    assert_nil app.worktree_root
-    assert_nil app.base_port
+    assert_equal "/home/bot/repos/flexday-worktrees", app.worktree_root
+    assert_equal "flexday", app.worktree_driver
+    assert_equal "herdr", app.session_driver
+    assert_equal 4001, app.base_port
+    assert_equal 99, app.port_count
+    refute app.database_enabled?
     assert_empty app.runtime_specs
     assert_equal ["flexday.tars.achan.bot"], app.dns_records
   end

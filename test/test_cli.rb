@@ -529,7 +529,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_worktree_start_dispatches_to_repo_tesseract
+  def test_flexday_worktree_start_uses_central_herdr_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -545,8 +545,11 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/flexday'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'demo'"
+    assert_includes script, "export TESSERACT_APP_ID='flexday'"
+    assert_includes script, "export TESSERACT_WORKTREE_ROOT='/home/bot/repos/flexday-worktrees'"
+    assert_includes script, "herdr_command workspace create"
+    assert_includes script, "pane run"
+    assert_includes script, "pnpm exec next dev"
     assert_empty stderr.string
   end
 

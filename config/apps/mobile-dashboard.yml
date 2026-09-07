@@ -2,8 +2,14 @@ id: mobile-dashboard
 repo: git@github.com:getsprung/mobile-dashboard.git
 main_path: /home/bot/repos/mobile-dashboard
 worktree_root: /home/bot/repos/mobile-dashboard-worktrees
-worktree_driver: repository
+worktree_driver: mobile-dashboard
+session_driver: herdr
 default_branch: main
 domain: mobile-dashboard.tars.achan.bot
+base_port: 8081
+port_count: 100
 database: false
+processes:
+  web: npm start
+  agent: codex --yolo
 dns_records: []

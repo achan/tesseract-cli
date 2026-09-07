@@ -60,7 +60,9 @@ class ConfigTest < Minitest::Test
     assert_equal "bot@case.local", host.ssh_target
     assert_equal "achan@case.local", host.service_ssh_target
     assert_equal "/Users/bot/repos", host.base_repo_path
+    assert_includes host.extra_path, "/Users/bot/.local/bin"
     assert_includes host.extra_path, "/Users/bot/.homebrew/bin"
+    assert_includes host.command_path, "/Users/bot/.local/bin"
     assert_includes host.command_path, "/Users/bot/.homebrew/bin"
     refute host.local?
   end
@@ -215,8 +217,11 @@ class ConfigTest < Minitest::Test
     assert_equal "git@github.com:getsprung/mobile-dashboard.git", app.repo
     assert_equal "/home/bot/repos/mobile-dashboard", app.main_path
     assert_equal "/home/bot/repos/mobile-dashboard-worktrees", app.worktree_root
-    assert_equal "repository", app.worktree_driver
+    assert_equal "mobile-dashboard", app.worktree_driver
+    assert_equal "herdr", app.session_driver
     assert_equal "main", app.default_branch
+    assert_equal 8081, app.base_port
+    assert_equal 100, app.port_count
     assert app.fetch_on_create
     refute app.git_worktrees?
     refute app.database_enabled?

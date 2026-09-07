@@ -680,8 +680,10 @@ EOF
       case action
       when "create"
         return usage("unexpected worktree create argument: #{extra_args[1]}") if extra_args.length > 1
-      when "status", "start", "stop"
+      when "status", "stop"
         return usage("unexpected worktree #{action} argument: #{extra_args.first}") unless extra_args.empty?
+      when "start"
+        # Central drivers validate their own optional runtime arguments.
       when "remove"
         force = extra_args == ["--force"]
         unless extra_args.empty? || force

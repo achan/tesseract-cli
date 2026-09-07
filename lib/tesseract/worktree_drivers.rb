@@ -9,7 +9,8 @@ module Tesseract
       REQUIRED_COMMANDS = {
         "sprung" => %w[git herdr jq mise tmux],
         "signatures" => %w[createdb git herdr jq mise ss],
-        "flexday" => %w[git herdr jq mise tmux]
+        "flexday" => %w[git herdr jq mise tmux],
+        "mobile-dashboard" => %w[curl git herdr jq lsof node npm tmux]
       }.freeze
 
       def initialize(root)

@@ -291,7 +291,10 @@ class ConfigTest < Minitest::Test
     assert_equal 6100, app.base_port
     assert_equal 99, app.port_count
     assert_equal "/home/bot/repos/tesseract-web/.env.local", app.env_shared_path
-    assert_equal "repository", app.worktree_driver
+    assert_equal "tesseract-web", app.worktree_driver
+    assert_equal "herdr", app.session_driver
+    assert_equal "bin/rails server", app.web_command
+    assert_equal "codex --yolo", app.agent_command
     assert_equal ["tesseract-web.tars.achan.bot"], app.dns_records
   end
 

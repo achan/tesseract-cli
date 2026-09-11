@@ -10,7 +10,8 @@ module Tesseract
         "sprung" => %w[git herdr jq mise tmux],
         "signatures" => %w[createdb git herdr jq mise ss],
         "flexday" => %w[git herdr jq mise tmux],
-        "mobile-dashboard" => %w[curl git herdr jq lsof node npm tmux]
+        "mobile-dashboard" => %w[curl git herdr jq lsof node npm tmux],
+        "tesseract-web" => %w[git herdr jq mise sqlite3 tmux]
       }.freeze
 
       def initialize(root)

@@ -43,6 +43,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
       assert_includes env,
         "EXPO_PUBLIC_DOCOVIA_API_BASE_URL=https://api.docovia.example.test:3113\n"
       assert_includes env, "EXPO_PUBLIC_OAUTH_CLIENT_ID=test-client\n"
+      refute_includes env, "EXPO_PUBLIC_IOS_CLIENT_ID="
       refute_includes env, "EXPO_PUBLIC_API_BASE_URL="
       assert_equal(
         "api_url=https://api.docovia.example.test:3113/v2\nport=8084\n",
@@ -59,6 +60,33 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
       assert_includes stdout, "runtime=tmux"
       assert_includes stdout, "tmux_session=mobile_dashboard_demo"
       assert_includes stdout, "legacy_runtime=yes"
+    end
+  end
+
+  def test_fresh_worktree_has_no_runtime_until_started
+    with_runtime_fixture(runtime: false) do |fixture|
+      stdout, stderr, status = run_driver(fixture, "worktree", "status", "demo")
+
+      assert status.success?, stderr
+      assert_includes stdout, "api_url=-"
+      assert_includes stdout, "port=-"
+      assert_includes stdout, "running=no"
+
+      stdout, stderr, status = run_driver(
+        fixture,
+        "worktree",
+        "start",
+        "demo",
+        "--api-url",
+        "https://api.docovia.example.test:3113/v2"
+      )
+
+      assert status.success?, stderr
+      assert_includes stdout, "port=8081"
+      assert_equal(
+        "api_url=https://api.docovia.example.test:3113/v2\nport=8081\n",
+        File.read(File.join(fixture.fetch(:worktree), ".tesseract", "runtime"))
+      )
     end
   end
 
@@ -93,7 +121,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
 
   private
 
-  def with_runtime_fixture(workspace: false, tmux_running: false)
+  def with_runtime_fixture(workspace: false, tmux_running: false, runtime: true)
     Dir.mktmpdir do |directory|
       main = File.join(directory, "main")
       worktree_root = File.join(directory, "worktrees")
@@ -110,7 +138,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
         <<~ENV
           EXPO_PUBLIC_VARIABLE_NAME=docovia
           EXPO_PUBLIC_API_BASE_URL=https://api.old.example.test
-          EXPO_PUBLIC_OAUTH_CLIENT_ID=test-client
+          EXPO_PUBLIC_IOS_CLIENT_ID=test-client
           PRESERVED_VALUE=yes
         ENV
       )
@@ -120,10 +148,12 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
         File.join(worktree, ".tesseract", "package-lock.sha256"),
         "#{Digest::SHA256.hexdigest(package_lock)}\n"
       )
-      File.write(
-        File.join(worktree, ".tesseract", "runtime"),
-        "api_url=https://api.docovia.example.test:3113/v2\nport=8084\n"
-      )
+      if runtime
+        File.write(
+          File.join(worktree, ".tesseract", "runtime"),
+          "api_url=https://api.docovia.example.test:3113/v2\nport=8084\n"
+        )
+      end
       herdr_log = File.join(directory, "herdr.log")
       tmux_log = File.join(directory, "tmux.log")
       FileUtils.touch([herdr_log, tmux_log])

@@ -138,11 +138,13 @@ refresh_workspace_metadata() {
 }
 
 runtime_api_url() {
-  sed -n 's/^api_url=//p' "$(worktree_path "$1")/.tesseract/runtime" 2>/dev/null | head -1
+  runtime_file="$(worktree_path "$1")/.tesseract/runtime"
+  [ ! -f "$runtime_file" ] || sed -n 's/^api_url=//p' "$runtime_file" | head -1
 }
 
 runtime_port() {
-  sed -n 's/^port=//p' "$(worktree_path "$1")/.tesseract/runtime" 2>/dev/null | head -1
+  runtime_file="$(worktree_path "$1")/.tesseract/runtime"
+  [ ! -f "$runtime_file" ] || sed -n 's/^port=//p' "$runtime_file" | head -1
 }
 
 prepare_runtime() {
@@ -161,6 +163,9 @@ prepare_runtime() {
   fi
   touch "$path/.env"
   oauth_client_id=$(sed -n 's/^EXPO_PUBLIC_OAUTH_CLIENT_ID=//p' "$path/.env" | tail -1)
+  if [ -z "$oauth_client_id" ]; then
+    oauth_client_id=$(sed -n 's/^EXPO_PUBLIC_IOS_CLIENT_ID=//p' "$path/.env" | tail -1)
+  fi
   variant=$(sed -n 's/^EXPO_PUBLIC_VARIABLE_NAME=//p' "$path/.env" | tail -1)
   variant=${variant:-docovia}
   variant_env_prefix=$(printf "%s" "$variant" | tr '[:lower:]-' '[:upper:]_')

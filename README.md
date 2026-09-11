@@ -301,6 +301,12 @@ bin/tesseract worktree start tesseract-web ingestion-ui --host tars
 bin/tesseract worktree status tesseract-web ingestion-ui --host tars
 ```
 
+Tesseract web worktrees run in the default Herdr session. Starting one creates
+a `tess/<slug>` workspace with a Code tab (Codex and terminal panes) and a
+Servers tab (Rails, jobs, and Tailwind panes). Legacy
+`tesseract_web_<slug>` tmux sessions are reported by status and must be stopped
+before the worktree can start in Herdr.
+
 Docovia Chrome Extensions uses the Git-only lifecycle with the
 `chrome-extensions` app id. Starting it opens a tmux session rooted in the
 worktree; it does not launch a web server or assign a URL:

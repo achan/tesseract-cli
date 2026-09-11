@@ -553,7 +553,7 @@ class CLITest < Minitest::Test
     assert_empty stderr.string
   end
 
-  def test_tesseract_web_worktree_start_dispatches_to_repo_adapter
+  def test_tesseract_web_worktree_start_uses_central_herdr_driver
     stdout = StringIO.new
     stderr = StringIO.new
     runner = ScriptCaptureRunner.new
@@ -569,8 +569,12 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "cd '/home/bot/repos/tesseract-web'"
-    assert_includes script, "exec ./bin/tesseract 'worktree' 'start' 'demo'"
+    assert_includes script, "export TESSERACT_APP_ID='tesseract-web'"
+    assert_includes script, "export TESSERACT_WORKTREE_ROOT='/home/bot/repos/tesseract-web-worktrees'"
+    assert_includes script, "herdr_command workspace create"
+    assert_includes script, "bin/rails server"
+    assert_includes script, "bin/jobs"
+    assert_includes script, "tailwindcss:watch"
     assert_empty stderr.string
   end
 

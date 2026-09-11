@@ -19,11 +19,14 @@ class WorktreeDriversTest < Minitest::Test
     assert registry.known?("git")
     assert registry.central?("sprung")
     assert registry.central?("signatures")
+    assert registry.central?("tesseract-web")
     assert_equal %w[git herdr jq mise tmux], registry.fetch("sprung").required_commands
     assert_equal %w[git herdr jq mise tmux], registry.fetch("flexday").required_commands
     assert_equal %w[curl git herdr jq lsof node npm tmux],
       registry.fetch("mobile-dashboard").required_commands
     assert_equal %w[createdb git herdr jq mise ss], registry.fetch("signatures").required_commands
+    assert_equal %w[git herdr jq mise sqlite3 tmux],
+      registry.fetch("tesseract-web").required_commands
     assert_raises(Tesseract::WorktreeDrivers::Error) { registry.fetch("missing") }
   end
 

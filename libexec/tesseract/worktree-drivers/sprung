@@ -6,6 +6,13 @@ REQUESTED_APP_NAME="${TESSERACT_REQUESTED_APP_NAME:-$APP_ID}"
 APP_SHORTHAND="${TESSERACT_APP_SHORTHAND:-$APP_ID}"
 MAIN_PATH="${TESSERACT_MAIN_PATH:?missing TESSERACT_MAIN_PATH}"
 WORKTREE_ROOT="${TESSERACT_WORKTREE_ROOT:?missing TESSERACT_WORKTREE_ROOT}"
+SHARED_ENV_PATH="${TESSERACT_ENV_SHARED_PATH:-$MAIN_PATH/.env.local}"
+PORT_START="${TESSERACT_PORT_START:-3100}"
+PORT_COUNT="${TESSERACT_PORT_COUNT:-100}"
+DATABASE_PREFIX="${TESSERACT_DATABASE_PREFIX:-sprung_dev_worktree}"
+PG_HOST="${TESSERACT_PGHOST:-127.0.0.1}"
+PG_USER="${TESSERACT_PGUSER:-bot}"
+PG_PASSWORD="${TESSERACT_PGPASSWORD:-dev}"
 DOMAIN="${TESSERACT_DOMAIN:?missing TESSERACT_DOMAIN}"
 DOMAIN_ALIASES="${TESSERACT_DOMAIN_ALIASES:-}"
 RUNTIME_DOMAIN="${TESSERACT_RUNTIME_DOMAIN:-$DOMAIN}"
@@ -68,8 +75,7 @@ legacy_workspace_app_label() {
 }
 
 runtime_spec() {
-  path="$1"
-  specs=""
+  local path="$1" specs="" version
   if [ -f "$path/.ruby-version" ]; then
     version=$(cat "$path/.ruby-version")
     specs="$specs ruby@${version#ruby-}"
@@ -82,7 +88,7 @@ runtime_spec() {
 }
 
 run_runtime() {
-  path="$1"
+  local path="$1" specs
   shift
   specs=$(runtime_spec "$path")
   if [ -n "$specs" ] && command -v mise >/dev/null 2>&1; then
@@ -94,19 +100,11 @@ run_runtime() {
 }
 
 runtime_prefix() {
-  path="$1"
+  local path="$1" specs
   specs=$(runtime_spec "$path")
   if [ -n "$specs" ] && command -v mise >/dev/null 2>&1; then
     printf "mise exec %s -- " "$specs"
   fi
-}
-
-repository_command() {
-  if [ ! -x "$MAIN_PATH/bin/tesseract" ]; then
-    echo "missing repo-local $MAIN_PATH/bin/tesseract" >&2
-    exit 1
-  fi
-  (cd "$MAIN_PATH" && "$MAIN_PATH/bin/tesseract" "$@")
 }
 
 port_for_slug() {
@@ -141,9 +139,7 @@ webpack_port_for_slug() {
 }
 
 ensure_env_setting() {
-  env_file="$1"
-  key="$2"
-  value="$3"
+  local env_file="$1" key="$2" value="$3"
   if grep -q "^${key}=" "$env_file"; then
     sed -i.bak "s|^${key}=.*|${key}=${value}|" "$env_file"
     rm -f "${env_file}.bak"
@@ -153,8 +149,7 @@ ensure_env_setting() {
 }
 
 env_setting() {
-  env_file="$1"
-  key="$2"
+  local env_file="$1" key="$2"
   sed -n "s/^${key}=//p" "$env_file" | head -1 | tr -d '"' | tr -d "'"
 }
 
@@ -205,7 +200,7 @@ ensure_running_configuration_matches() {
 }
 
 ensure_startable() {
-  slug="$1"
+  local slug="$1" path env_file
   path=$(worktree_path "$slug")
   env_file="$path/.env.development.local"
   [ -f "$env_file" ] || {
@@ -223,7 +218,8 @@ ensure_startable() {
     echo "missing Docovia certificate files for $slug" >&2
     exit 1
   fi
-  if [ -f "$path/package.json" ] && [ ! -x "$path/node_modules/.bin/webpack-dev-server" ]; then
+  run_runtime "$path" bundle check || run_runtime "$path" bundle install
+  if [ -f "$path/package.json" ] && { [ "${SETUP_WAS_COMPLETE:-false}" != true ] || [ ! -x "$path/node_modules/.bin/webpack-dev-server" ]; }; then
     if [ -f "$path/yarn.lock" ]; then
       run_runtime "$path" bin/yarn install --frozen-lockfile
     else
@@ -232,6 +228,351 @@ ensure_startable() {
     [ ! -x "$path/bin/build" ] || run_runtime "$path" bin/build
   fi
   run_runtime "$path" bundle check
+}
+
+# Directory locks work on both the workstation and the Linux runtime host.
+acquire_lock() {
+  local lock="$1" owner attempt=0
+  while ! mkdir "$lock" 2>/dev/null; do
+    owner=$(cat "$lock/pid" 2>/dev/null || true)
+    if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -f "$lock/pid"
+      rmdir "$lock" 2>/dev/null || true
+    else
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 100 ]; then
+        echo "worktree operation already in progress: $lock" >&2
+        return 1
+      fi
+      sleep 0.1
+    fi
+  done
+  printf '%s\n' "$$" > "$lock/pid"
+}
+
+release_lock() {
+  local lock="$1"
+  if [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$$" ]; then
+    rm -f "$lock/pid"
+    rmdir "$lock"
+  fi
+}
+
+phase_log() {
+  if [ "$2" = setup ]; then
+    printf '%s/log/tesseract-create.log' "$1"
+  else
+    printf '%s/log/tesseract-seed.log' "$1"
+  fi
+}
+
+write_phase_status() {
+  local path="$1" phase="$2" status="$3" message="${4:-}"
+  local file="$path/.tesseract-$phase.status"
+  {
+    printf 'status=%s\nupdated_at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    [ -z "$message" ] || printf 'message=%s\n' "$message"
+    :
+  } > "$file.tmp.$$"
+  mv "$file.tmp.$$" "$file"
+}
+
+phase_pid() {
+  local pid
+  pid=$(cat "$1/.tesseract-$2.pid" 2>/dev/null || true)
+  [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # A zombie cannot finish setup, even though kill -0 still succeeds.
+  case "$(ps -p "$pid" -o stat= 2>/dev/null)" in *Z*) return 1 ;; esac
+  printf '%s' "$pid"
+}
+
+phase_status() {
+  local path="$1" phase="$2" status
+  [ -d "$path" ] || { echo missing; return; }
+  status=$(sed -n 's/^status=//p' "$path/.tesseract-$phase.status" 2>/dev/null | tail -1) || true
+  status="${status:-unknown}"
+  if [ "$status" = running ] && ! phase_pid "$path" "$phase" >/dev/null; then
+    status=failed
+  fi
+  printf '%s\n' "$status"
+}
+
+emit_preparation_status() {
+  local path="$1" phase
+  for phase in setup seed; do
+    echo "$phase=$(phase_status "$path" "$phase")"
+    echo "${phase}_log=$(phase_log "$path" "$phase")"
+  done
+}
+
+choose_port() {
+  local candidate allocated
+  command -v lsof >/dev/null 2>&1 || { echo "lsof is required to allocate worktree ports" >&2; return 1; }
+  allocated=$(find "$WORKTREE_ROOT" -mindepth 2 -maxdepth 2 -name .env.development.local -exec \
+    sed -n -e 's/^PORT=//p' -e 's/^WEBPACKER_DEV_SERVER_PORT=//p' {} \; | tr -d "\"'")
+  # The base port belongs to the main checkout; worktree Redis indexes start at 1.
+  for ((candidate=PORT_START+1; candidate<PORT_START+PORT_COUNT; candidate++)); do
+    if printf '%s\n' "$allocated" | grep -Eq "^($candidate|$((candidate + 1000)))$"; then
+      continue
+    fi
+    if lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1 || \
+      lsof -nP -iTCP:"$((candidate + 1000))" -sTCP:LISTEN >/dev/null 2>&1; then
+      continue
+    fi
+    printf '%s' "$candidate"
+    return
+  done
+  echo "no available worktree port in $((PORT_START + 1))..$((PORT_START + PORT_COUNT - 1))" >&2
+  return 1
+}
+
+create_worktree() {
+  local slug="$1" branch="${2:-feature/$1}" path port db_name redis_db env_file
+  path=$(worktree_path "$slug")
+  if [ -d "$path" ]; then
+    echo "worktree already exists: $path"
+    return
+  fi
+  git -C "$MAIN_PATH" rev-parse --is-inside-work-tree >/dev/null
+  [ -r "$SHARED_ENV_PATH" ] || { echo "missing shared environment: $SHARED_ENV_PATH" >&2; return 1; }
+  branch="${branch#origin/}"
+  git check-ref-format --branch "$branch" >/dev/null
+  db_name="${DATABASE_PREFIX}_$(sanitize_slug "$slug")"
+  # Different slugs must not silently share the same sanitized database name.
+  for env_file in "$WORKTREE_ROOT"/*/.env.development.local; do
+    [ -f "$env_file" ] || continue
+    if [ "$(env_setting "$env_file" DATABASE_NAME)" = "$db_name" ]; then
+      echo "database name already assigned: $db_name" >&2
+      return 1
+    fi
+  done
+  port=$(choose_port)
+  redis_db=$((port - PORT_START))
+  git -C "$MAIN_PATH" fetch origin "$branch" >/dev/null 2>&1 || true
+  if git -C "$MAIN_PATH" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$MAIN_PATH" worktree add "$path" "$branch"
+  elif git -C "$MAIN_PATH" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    git -C "$MAIN_PATH" worktree add --track -b "$branch" "$path" "origin/$branch"
+  else
+    git -C "$MAIN_PATH" worktree add -b "$branch" "$path" main
+  fi
+  [ -e "$path/.env.local" ] || [ -L "$path/.env.local" ] || ln -s "$SHARED_ENV_PATH" "$path/.env.local"
+  if [ ! -e "$path/app.crt" ] && [ ! -L "$path/app.crt" ] && [ -r "$CERT_PATH" ]; then
+    ln -s "$CERT_PATH" "$path/app.crt"
+  fi
+  if [ ! -e "$path/app.key" ] && [ ! -L "$path/app.key" ] && [ -r "$KEY_PATH" ]; then
+    ln -s "$KEY_PATH" "$path/app.key"
+  fi
+  cat > "$path/.env.development.local" <<EOF
+APP_PORT=:${port}
+PORT=${port}
+DATABASE_NAME=${db_name}
+API_ENVIRONMENT=test
+API_V2_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+PGHOST=${PG_HOST}
+PGUSER=${PG_USER}
+PGPASSWORD=${PG_PASSWORD}
+SPRUNG_DATABASE_PASSWORD=${PG_PASSWORD}
+REDIS_URL=redis://127.0.0.1:6379/${redis_db}
+WEBPACKER_DEV_SERVER_HOST=0.0.0.0
+WEBPACKER_DEV_SERVER_PORT=$((port + 1000))
+WEBPACKER_DEV_SERVER_PUBLIC=localhost:$((port + 1000))
+EOF
+  cat > "$path/.env.test.local" <<EOF
+VARIABLE_NAME=${db_name}
+API_ENVIRONMENT=test
+API_V2_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+PGHOST=${PG_HOST}
+PGUSER=${PG_USER}
+PGPASSWORD=${PG_PASSWORD}
+SPRUNG_DATABASE_PASSWORD=${PG_PASSWORD}
+EOF
+  chmod 0600 "$path/.env.development.local" "$path/.env.test.local"
+  ensure_runtime_env "$slug" "$port"
+  write_phase_status "$path" setup pending
+  write_phase_status "$path" seed pending
+  echo "created ${APP_ID}/${slug} branch=${branch} port=${port} db=${db_name} path=${path}"
+  emit_preparation_status "$path"
+}
+
+prepare_databases() {
+  local path="$1" db_name
+  db_name=$(env_setting "$path/.env.development.local" DATABASE_NAME)
+  if [ -z "$db_name" ]; then
+    echo "missing DATABASE_NAME in $path/.env.development.local" >&2
+    return 1
+  fi
+  # A failed first seed leaves an initialized database. db:prepare alone would
+  # skip seeds on retry, so use Rails' seed-loader hook to load them exactly once.
+  run_runtime "$path" env RAILS_ENV=test bin/rails db:create
+  run_runtime "$path" env RAILS_ENV=development bin/rails runner - <<'RUBY'
+require "active_record/tasks/database_tasks"
+tasks = ActiveRecord::Tasks::DatabaseTasks
+original_loader = tasks.seed_loader
+seeded = false
+loader = Object.new
+loader.define_singleton_method(:load_seed) do
+  original_loader.load_seed
+  seeded = true
+end
+tasks.seed_loader = loader
+tasks.prepare_all
+tasks.load_seed unless seeded
+RUBY
+}
+
+run_is_current() {
+  [ "$(cat "$path/log/.tesseract-active-run" 2>/dev/null || true)" = "$RUN_FILE" ]
+}
+
+finish_preparation() {
+  local status=$? attempt
+  trap - EXIT HUP INT TERM
+  if [ -n "${STAGE_PID:-}" ]; then
+    kill -TERM -- "-$STAGE_PID" 2>/dev/null || true
+    for ((attempt=0; attempt<20; attempt++)); do
+      kill -0 -- "-$STAGE_PID" 2>/dev/null || break
+      sleep 0.05
+    done
+    kill -KILL -- "-$STAGE_PID" 2>/dev/null || true
+    wait "$STAGE_PID" 2>/dev/null || true
+  fi
+  if [ -n "${TAIL_PID:-}" ]; then
+    kill "$TAIL_PID" 2>/dev/null || true
+    wait "$TAIL_PID" 2>/dev/null || true
+  fi
+  if [ -n "${ACTIVE_PHASE:-}" ]; then
+    write_phase_status "$path" "$ACTIVE_PHASE" failed "see $(phase_log "$path" "$ACTIVE_PHASE")"
+    rm -f "$path/.tesseract-$ACTIVE_PHASE.pid"
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "Setup failed or was interrupted. Retry with:"
+    echo "  tesseract worktree stop $REQUESTED_APP_NAME $slug"
+    echo "  tesseract worktree start $REQUESTED_APP_NAME $slug"
+    if run_is_current; then
+      herdr_command pane rename "$rails_pane_id" 'Setup failed' >/dev/null 2>&1 || true
+    fi
+  fi
+  rm -f "$RUN_FILE.pid"
+  release_lock "$path/log/.tesseract-prepare.lock"
+  exit "$status"
+}
+
+run_phase() {
+  local phase="$1"
+  shift
+  ACTIVE_PHASE="$phase"
+  printf '%s\n' "$$" > "$path/.tesseract-$phase.pid"
+  write_phase_status "$path" "$phase" running
+  # Job control gives the stage and its tee process a dedicated process group.
+  # Cancelling the coordinator terminates installs/Rails and their descendants too.
+  (
+    trap - EXIT HUP INT TERM
+    set -euo pipefail
+    "$@" 2>&1 | tee -a "$(phase_log "$path" "$phase")"
+  ) &
+  STAGE_PID=$!
+  wait "$STAGE_PID"
+  STAGE_PID=""
+  run_is_current
+  write_phase_status "$path" "$phase" complete
+  rm -f "$path/.tesseract-$phase.pid"
+  ACTIVE_PHASE=""
+}
+
+wait_for_legacy_phase() {
+  local phase="$1" pid log_file
+  if [ "$(phase_status "$path" "$phase")" = running ] && pid=$(phase_pid "$path" "$phase"); then
+    echo "Waiting for existing $phase process $pid"
+    log_file=$(phase_log "$path" "$phase")
+    if [ -f "$log_file" ]; then
+      tail -n 30 -f "$log_file" &
+      TAIL_PID=$!
+    fi
+    while phase_pid "$path" "$phase" >/dev/null; do
+      run_is_current || break
+      sleep 0.2
+    done
+    [ -z "$TAIL_PID" ] || { kill "$TAIL_PID" 2>/dev/null || true; wait "$TAIL_PID" 2>/dev/null || true; }
+    TAIL_PID=""
+    run_is_current
+    [ "$(phase_status "$path" "$phase")" = complete ] || return 1
+  fi
+}
+
+prepare_and_start_servers() {
+  cd "$path"
+  run_is_current || return 1
+  ACTIVE_PHASE=""
+  STAGE_PID=""
+  TAIL_PID=""
+  trap finish_preparation EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM HUP
+  set -m
+  printf '%s\n' "$$" > "$RUN_FILE.pid"
+  acquire_lock "$path/log/.tesseract-prepare.lock"
+  run_is_current
+  wait_for_legacy_phase setup
+  wait_for_legacy_phase seed
+  SETUP_WAS_COMPLETE=false
+  [ "$(phase_status "$path" setup)" != complete ] || SETUP_WAS_COMPLETE=true
+  run_phase setup ensure_startable "$slug"
+  if [ "$(phase_status "$path" seed)" != complete ]; then
+    run_phase seed prepare_databases "$path"
+  fi
+  run_is_current
+  herdr_command pane rename "$rails_pane_id" Rails >/dev/null
+  herdr_command pane run "$jobs_pane_id" "$jobs_command" >/dev/null
+  run_is_current
+  herdr_command pane run "$webpack_pane_id" "$webpack_command" >/dev/null
+  run_is_current
+  rm -f "$RUN_FILE.pid"
+  release_lock "$path/log/.tesseract-prepare.lock"
+  trap - EXIT HUP INT TERM
+  exec bash -c "$rails_command"
+}
+
+write_preparation_runner() {
+  local variable function_name
+  mkdir -p "$path/log"
+  RUN_FILE=$(mktemp "$path/log/.tesseract-run.XXXXXX")
+  chmod 0700 "$RUN_FILE"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\numask 077\n'
+    for variable in PATH WORKTREE_ROOT CERT_PATH KEY_PATH HERDR_SESSION_NAME REQUESTED_APP_NAME \
+      slug path rails_pane_id jobs_pane_id webpack_pane_id rails_command jobs_command webpack_command RUN_FILE; do
+      declare -p "$variable"
+    done
+    printf 'export PATH\n'
+    for function_name in worktree_path runtime_spec run_runtime ensure_env_setting env_setting ensure_startable \
+      acquire_lock release_lock phase_log phase_pid phase_status write_phase_status prepare_databases \
+      herdr_command run_is_current finish_preparation run_phase wait_for_legacy_phase prepare_and_start_servers; do
+      declare -f "$function_name"
+    done
+    printf '\nprepare_and_start_servers\n'
+  } > "$RUN_FILE"
+  printf '%s\n' "$RUN_FILE" > "$path/log/.tesseract-active-run"
+}
+
+cancel_preparation() {
+  local path="$1" run_file pid attempt
+  run_file=$(cat "$path/log/.tesseract-active-run" 2>/dev/null || true)
+  rm -f "$path/log/.tesseract-active-run"
+  case "$run_file" in "$path/log/.tesseract-run."*) ;; *) return 0 ;; esac
+  pid=$(cat "$run_file.pid" 2>/dev/null || true)
+  [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] || return 0
+  # Do not signal a reused PID or a process not owned by this generated runner.
+  case "$(ps -p "$pid" -o args= 2>/dev/null)" in *"$run_file"*) ;; *) return 0 ;; esac
+  kill -TERM "$pid" 2>/dev/null || true
+  for ((attempt=0; attempt<100; attempt++)); do
+    [ -f "$run_file.pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  echo "preparation has not stopped for $path; refusing to continue" >&2
+  return 1
 }
 
 herdr_command() {
@@ -323,6 +664,7 @@ emit_herdr_runtime() {
   echo "session=$HERDR_SESSION_NAME"
   echo "workspace_id=$workspace_id"
   echo "target=${HERDR_SESSION_NAME}:${identity}"
+  emit_preparation_status "$path"
 }
 
 rollback_workspace() {
@@ -330,8 +672,12 @@ rollback_workspace() {
   trap - EXIT
   if [ "$code" -ne 0 ]; then
     workspace_id="${CREATED_WORKSPACE_ID:-}"
-    [ -z "$workspace_id" ] || herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
+    if [ -n "$workspace_id" ]; then
+      cancel_preparation "$(worktree_path "$slug")" || true
+      herdr_command workspace close "$workspace_id" >/dev/null 2>&1 || true
+    fi
   fi
+  [ -z "${DRIVER_LOCK:-}" ] || release_lock "$DRIVER_LOCK"
   exit "$code"
 }
 
@@ -369,8 +715,8 @@ start_worktree() {
     return
   fi
 
+  cancel_preparation "$path"
   ensure_runtime_env "$slug" "$port"
-  ensure_startable "$slug"
   webpack_port=$(webpack_port_for_slug "$slug")
   prefix=$(runtime_prefix "$path")
   printf -v rails_command \
@@ -386,7 +732,6 @@ start_worktree() {
   printf -v agent_command 'TESSERACT_LIVE_ACTIVITY_APP=%q %s' "$APP_ID" "$AGENT_COMMAND"
 
   CREATED_WORKSPACE_ID=""
-  trap rollback_workspace EXIT
   workspace_create_json=$(herdr_command workspace create \
     --cwd "$path" --label "$identity" \
     --env "TESSERACT_LIVE_ACTIVITY_APP=$APP_ID" --no-focus)
@@ -400,6 +745,7 @@ start_worktree() {
   terminal_pane_id=$(printf "%s" "$terminal_json" | jq -er '.result.pane.pane_id')
   herdr_command pane rename "$codex_pane_id" Codex >/dev/null
   herdr_command pane rename "$terminal_pane_id" Terminal >/dev/null
+  herdr_command pane run "$codex_pane_id" "$agent_command" >/dev/null
 
   servers_json=$(herdr_command tab create \
     --workspace "$CREATED_WORKSPACE_ID" --cwd "$path" --label Servers \
@@ -411,14 +757,10 @@ start_worktree() {
   webpack_json=$(herdr_command pane split \
     --pane "$jobs_pane_id" --direction right --ratio 0.5 --cwd "$path" --no-focus)
   webpack_pane_id=$(printf "%s" "$webpack_json" | jq -er '.result.pane.pane_id')
-  herdr_command pane rename "$rails_pane_id" Rails >/dev/null
+  herdr_command pane rename "$rails_pane_id" Setup >/dev/null
   herdr_command pane rename "$jobs_pane_id" Jobs >/dev/null
   herdr_command pane rename "$webpack_pane_id" Webpack >/dev/null
 
-  herdr_command pane run "$codex_pane_id" "$agent_command" >/dev/null
-  herdr_command pane run "$rails_pane_id" "$rails_command" >/dev/null
-  herdr_command pane run "$jobs_pane_id" "$jobs_command" >/dev/null
-  herdr_command pane run "$webpack_pane_id" "$webpack_command" >/dev/null
   for pane_id in "$codex_pane_id" "$terminal_pane_id" "$rails_pane_id" "$jobs_pane_id" "$webpack_pane_id"; do
     if [ "$pane_id" = "$codex_pane_id" ]; then
       herdr_command pane report-metadata "$pane_id" --source tesseract \
@@ -428,10 +770,14 @@ start_worktree() {
         --token "url=$app_url" >/dev/null
     fi
   done
-  trap - EXIT
+  write_preparation_runner
+  printf -v preparation_command 'bash %q' "$RUN_FILE"
+  herdr_command pane run "$rails_pane_id" "$preparation_command" >/dev/null
+  workspace_id="$CREATED_WORKSPACE_ID"
+  CREATED_WORKSPACE_ID=""
 
   echo "started $identity"
-  emit_herdr_runtime "$slug" "$path" "$port" "$CREATED_WORKSPACE_ID"
+  emit_herdr_runtime "$slug" "$path" "$port" "$workspace_id"
 }
 
 stop_worktree() {
@@ -439,6 +785,7 @@ stop_worktree() {
   identity=$(workspace_identity "$slug")
   legacy_session=$(legacy_session_name "$slug")
   stopped=false
+  cancel_preparation "$(worktree_path "$slug")"
   load_workspace "$slug"
   if [ "$WORKSPACE_COUNT" -eq 1 ]; then
     herdr_command workspace close "$WORKSPACE_ID" >/dev/null
@@ -456,19 +803,22 @@ stop_worktree() {
 status_worktree() {
   slug="$1"
   path=$(worktree_path "$slug")
-  repository_status=$(repository_command worktree status "$slug")
-  printf "%s\n" "$repository_status" |
-    sed -e '/^running=/d' -e '/^session=/d' -e '/^runtime=/d' \
-      -e '/^target=/d' -e '/^tmux_session=/d' -e '/^legacy_runtime=/d' \
-      -e '/^app=/d' -e '/^url=/d' -e '/^url_alias\[/d'
-  port=$(printf "%s\n" "$repository_status" | sed -n 's/^port=//p' | tail -n1)
   echo "app=$APP_ID"
-  if [ -n "$port" ]; then
+  echo "slug=$slug"
+  echo "path=$path"
+  if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "registered=yes"
+    echo "branch=$(git -C "$path" branch --show-current)"
+    port=$(port_for_slug "$slug")
+    echo "port=$port"
     echo "url=https://app.${DOMAIN}:${port}"
     for alias_domain in $DOMAIN_ALIASES; do
       echo "url_alias[${alias_domain}]=https://app.${alias_domain}:${port}"
     done
+  else
+    echo "registered=no"
   fi
+  emit_preparation_status "$path"
 
   load_workspace "$slug"
   legacy_session=$(legacy_session_name "$slug")
@@ -499,10 +849,35 @@ status_worktree() {
 }
 
 remove_worktree() {
-  slug="$1"
-  shift
+  local slug="$1" force="${2:-}" path db_name phase
+  path=$(worktree_path "$slug")
   stop_worktree "$slug"
-  repository_command worktree remove "$slug" "$@"
+  if [ ! -d "$path" ]; then
+    git -C "$MAIN_PATH" worktree prune
+    echo "worktree is missing: $path"
+    return
+  fi
+  for phase in setup seed; do
+    if [ "$(phase_status "$path" "$phase")" = running ]; then
+      echo "legacy $phase is still running; wait for completion before removing $slug" >&2
+      return 1
+    fi
+  done
+  if [ -n "$(git -C "$path" status --porcelain)" ] && [ "$force" != --force ]; then
+    echo "worktree has uncommitted changes; rerun with --force" >&2
+    return 1
+  fi
+  db_name="${DATABASE_PREFIX}_$(sanitize_slug "$slug")"
+  if [ "$force" = --force ]; then
+    git -C "$MAIN_PATH" worktree remove --force "$path"
+  else
+    git -C "$MAIN_PATH" worktree remove "$path"
+  fi
+  git -C "$MAIN_PATH" worktree prune
+  if command -v dropdb >/dev/null 2>&1; then
+    PGHOST="$PG_HOST" PGUSER="$PG_USER" PGPASSWORD="$PG_PASSWORD" dropdb --if-exists "$db_name"
+  fi
+  echo "removed ${APP_ID}/${slug}"
 }
 
 [ "${1:-}" = "worktree" ] || usage
@@ -510,11 +885,22 @@ action="${2:-}"
 slug="${3:-}"
 shift 3 || usage
 validate_slug "$slug"
+umask 077
+DRIVER_LOCK=""
+CREATED_WORKSPACE_ID=""
+trap rollback_workspace EXIT
+trap 'exit 143' TERM HUP
+trap 'exit 130' INT
+if [ "$action" != status ]; then
+  mkdir -p "$WORKTREE_ROOT"
+  DRIVER_LOCK="$WORKTREE_ROOT/.tesseract-lifecycle.lock"
+  acquire_lock "$DRIVER_LOCK"
+fi
 
 case "$action" in
   create)
     [ "$#" -le 1 ] || usage
-    repository_command worktree create "$slug" "$@"
+    create_worktree "$slug" "$@"
     ;;
   start|stop|status)
     [ "$#" -eq 0 ] || usage

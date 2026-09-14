@@ -323,6 +323,22 @@ tab (Rails, jobs, and webpack panes). Existing `doc/<slug>` workspaces are
 renamed when started, while legacy `docovia_<slug>` tmux sessions are reported
 by status and must be stopped before the worktree can start in Herdr.
 
+Sprung's central driver owns creation, setup, status, and removal; the app's
+`bin/tesseract` is not required. Create prepares the checkout, ports, and
+environment files and reports `setup=pending` and `seed=pending`. Start opens
+Code immediately, then installs dependencies, builds assets, and prepares the
+database in the Rails pane, temporarily named Setup. Jobs and Webpack start
+only after preparation succeeds, and Setup becomes Rails. Background setup
+never changes focus. Port allocation requires `lsof` on the runtime host.
+
+`running=yes` means the Herdr workspace is available; `setup` and `seed` report
+whether preparation is pending, running, complete, or failed. Output appears
+in Servers and is retained in `log/tesseract-create.log` and
+`log/tesseract-seed.log`. Completed seeds are skipped. Setup failures leave Code
+available; use stop followed by start to retry. Stop cancels preparation owned
+by the workspace. A legacy background seed is allowed to finish before servers
+start, and removal refuses while such a seed is still running.
+
 `sprung` is the canonical CLI app id and the only one shown by `app list`.
 `docovia` and `smilesnap` remain accepted aliases; they resolve to the same
 repository, worktree paths, databases, ports, certificate, and runtime state.
@@ -377,9 +393,8 @@ while moving between Code, Terminal, and Servers.
 Other configured apps still use tmux. `stop` closes the app's runtime and
 processes but leaves the worktree, database, env files, and registry entry in
 place. `remove` is destructive: it stops the runtime and removes the git
-worktree. Signatures lifecycle behavior is owned by the central `signatures`
-driver. Sprung uses the central `sprung` driver around its app-local lifecycle
-adapter; compatibility profiles such as Flexday still delegate directly to an
+worktree. Signatures and Sprung lifecycle behavior is owned by their central
+drivers; compatibility profiles such as Flexday still delegate to an
 app-local adapter.
 
 `config/app-shorthands.yml` defines display names for Signatures (`sig`),

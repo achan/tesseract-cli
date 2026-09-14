@@ -7,7 +7,7 @@ module Tesseract
     class Registry
       BUILTIN_DRIVERS = %w[repository git].freeze
       REQUIRED_COMMANDS = {
-        "sprung" => %w[git herdr jq mise tmux],
+        "sprung" => %w[git herdr jq lsof mise tmux],
         "signatures" => %w[createdb git herdr jq mise ss],
         "flexday" => %w[git herdr jq mise tmux],
         "mobile-dashboard" => %w[curl git herdr jq lsof node npm tmux],
@@ -93,6 +93,7 @@ module Tesseract
           "TESSERACT_APP_SHORTHAND" => profile.shorthand,
           "TESSERACT_MAIN_PATH" => profile.main_path,
           "TESSERACT_WORKTREE_ROOT" => profile.worktree_root,
+          "TESSERACT_ENV_SHARED_PATH" => profile.env_shared_path,
           "TESSERACT_DOMAIN" => profile.domain,
           "TESSERACT_DOMAIN_ALIASES" => profile.domain_aliases.join(" "),
           "TESSERACT_RUNTIME_DOMAIN" => profile.runtime_domain,

@@ -322,11 +322,12 @@ class CLITest < Minitest::Test
     script = runner.scripts.fetch(0)
 
     assert_equal 0, status
-    assert_includes script, "RUNTIME"
-    assert_includes script, "TARGET"
+    refute_includes script, '"RUNTIME"'
+    assert_includes script, '"TARGET"'
+    assert_includes script, '"$runtime:${branch:-$slug}"'
     assert_includes script, "RSS"
     assert_includes script, "URL"
-    assert_includes script, "CHANGELOG"
+    refute_includes script, '"CHANGELOG"'
     assert_includes script, "/home/bot/repos/sprung-app"
     assert_includes script, "/home/bot/repos/flexday"
     assert_includes script, "/home/bot/repos/tesseract-web"
@@ -336,10 +337,6 @@ class CLITest < Minitest::Test
     assert_includes script, "command -v lsof"
     assert_includes script, 'ps -o rss= -p "$pid"'
     assert_includes script, "format_rss()"
-    assert_includes script, "changelog_for_path()"
-    assert_includes script, "/home/bot/.codex/state/worktree-changelogs.json"
-    assert_includes script, "Digest::SHA256.hexdigest"
-    assert_includes script, "https://pages-tars.achan.bot"
     assert_includes script, "git -C \"$main_path\" worktree list --porcelain"
     assert_includes script, "\"$main_path/bin/tesseract\" worktree status \"$slug\""
     assert_includes script, "running="
@@ -353,8 +350,8 @@ class CLITest < Minitest::Test
     stdout = StringIO.new
     stderr = StringIO.new
     outputs = {
-      "case" => "RUNTIME TARGET RSS URL CHANGELOG\ntmux mobile_dashboard_demo 10MiB http://localhost:8081 -\n",
-      "tars" => "RUNTIME TARGET RSS URL CHANGELOG\ntmux docovia_demo 1GiB https://app.example -\n"
+      "case" => "TARGET RSS URL\ntmux:feature/mobile-demo 10MiB http://localhost:8081\n",
+      "tars" => "TARGET RSS URL\ntmux:feature/docovia-demo 1GiB https://app.example\n"
     }
     factory = lambda do |target_host, stdout:, stderr:|
       Object.new.tap do |fake|
@@ -366,9 +363,9 @@ class CLITest < Minitest::Test
     status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
 
     assert_equal 0, status
-    assert_includes stdout.string, "HOST"
-    assert_includes stdout.string, "case     tmux mobile_dashboard_demo"
-    assert_includes stdout.string, "tars     tmux docovia_demo"
+    assert_equal %w[HOST TARGET RSS URL], stdout.string.lines.first.split
+    assert_includes stdout.string, "case     tmux:feature/mobile-demo 10MiB"
+    assert_includes stdout.string, "tars     tmux:feature/docovia-demo 1GiB"
     refute_match(/^local\s/, stdout.string)
     assert_empty stderr.string
   end
@@ -381,7 +378,7 @@ class CLITest < Minitest::Test
         fake.define_singleton_method(:run) do |_script|
           raise Tesseract::RemoteRunner::Error, "unreachable" if target_host.id == "case"
 
-          stdout.print("RUNTIME TARGET RSS URL CHANGELOG\ntmux docovia_demo 1GiB https://app.example -\n")
+          stdout.print("TARGET RSS URL\ntmux:feature/docovia-demo 1GiB https://app.example\n")
           0
         end
       end
@@ -391,7 +388,7 @@ class CLITest < Minitest::Test
     status = Tesseract::RemoteRunner.stub(:new, factory) { cli.run }
 
     assert_equal 1, status
-    assert_includes stdout.string, "tars     tmux docovia_demo"
+    assert_includes stdout.string, "tars     tmux:feature/docovia-demo 1GiB"
     assert_includes stderr.string, "warning: case"
   end
 

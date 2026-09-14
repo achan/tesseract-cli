@@ -167,8 +167,8 @@ module Tesseract
       return live_single if @host_explicit
 
       @stdout.printf(
-        "%-8s %-8s %-32s %8s %-48s %s\n",
-        "HOST", "RUNTIME", "TARGET", "RSS", "URL", "CHANGELOG"
+        "%-8s %-48s %8s %s\n",
+        "HOST", "TARGET", "RSS", "URL"
       )
       failed = false
       @config.hosts.reject(&:local?).each do |target_host|
@@ -199,8 +199,6 @@ module Tesseract
     def live_single
       profiles = @config.apps(host: host)
       apps = profiles.map { |profile| "#{profile.id}\t#{profile.main_path}\t#{profile.worktree_driver}" }
-      changelog_registry = File.join(File.dirname(host.base_repo_path), ".codex", "state", "worktree-changelogs.json")
-      changelog_base_url = host.pages_domain ? "https://#{host.pages_domain}" : ""
 
       runner.run(<<~SH)
         set -u
@@ -258,28 +256,7 @@ module Tesseract
           }'
         }
 
-        changelog_for_path() {
-          target="$1"
-          base_url=#{Shell.single_quoted(changelog_base_url)}
-          [ -n "$base_url" ] || { printf "-"; return; }
-          token=$(ruby -rjson -rdigest -e '
-            path = File.realpath(ARGV.fetch(1))
-            token = Digest::SHA256.hexdigest("tesseract-worktree-changelog\\0\#{path}")[0, 40]
-            if File.file?(ARGV.fetch(0))
-              registry = JSON.parse(File.read(ARGV.fetch(0)))
-              registered = registry[path]
-              token = registered if registered.is_a?(String) && registered.match?(/\\A[0-9a-f]{40}\\z/)
-            end
-            print token
-          ' #{Shell.escape(changelog_registry)} "$target" 2>/dev/null || true)
-          if [ -n "$token" ]; then
-            printf "%s/p/%s.html" "$base_url" "$token"
-          else
-            printf "-"
-          fi
-        }
-
-        printf "%-8s %-32s %8s %-48s %s\\n" "RUNTIME" "TARGET" "RSS" "URL" "CHANGELOG"
+        printf "%-48s %8s %s\\n" "TARGET" "RSS" "URL"
         while IFS="$(printf '\\t')" read -r app main_path worktree_driver; do
           [ -n "$app" ] || continue
           [ -d "$main_path" ] || continue
@@ -313,8 +290,8 @@ module Tesseract
                 url=$(printf "%s\\n" "$status" | sed -n 's/^url=//p' | tail -n1)
                 if [ "$running" = "yes" ] && [ -n "$target" ] && [ -n "$url" ]; then
                   rss=$(format_rss "$(rss_for_path "$path")")
-                  changelog=$(changelog_for_path "$path")
-                  printf "%-8s %-32s %8s %-48s %s\\n" "$runtime" "$target" "$rss" "$url" "$changelog"
+                  branch=$(git -C "$path" symbolic-ref --short HEAD 2>/dev/null || git -C "$path" rev-parse --short HEAD 2>/dev/null || true)
+                  printf "%-48s %8s %s\\n" "$runtime:${branch:-$slug}" "$rss" "$url"
                   touch "$found_file"
                 fi
                 ;;

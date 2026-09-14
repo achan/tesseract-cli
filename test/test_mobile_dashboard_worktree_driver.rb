@@ -25,7 +25,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
       assert_includes stdout, "runtime=herdr"
       assert_includes stdout, "workspace_id=w7"
       assert_includes stdout, "target=default:md/demo"
-      assert_includes stdout, "url=http://localhost:8084"
+      assert_includes stdout.lines.map(&:chomp), "url=https://api.docovia.example.test:3113/v2"
 
       log = File.read(fixture.fetch(:herdr_log))
       assert_includes log, "workspace create --cwd #{fixture.fetch(:worktree)} --label md/demo"
@@ -37,6 +37,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
       assert_includes log,
         "pane run w7:p1 TESSERACT_LIVE_ACTIVITY_APP=mobile-dashboard codex --yolo"
       assert_includes log, "pane run w7:p3 npm start -- --port 8084"
+      assert_includes log, "--token url=https://api.docovia.example.test:3113/v2"
 
       env = File.read(File.join(fixture.fetch(:worktree), ".env"))
       assert_includes env, "EXPO_PUBLIC_VARIABLE_NAME=docovia\n"
@@ -60,6 +61,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
       assert_includes stdout, "runtime=tmux"
       assert_includes stdout, "tmux_session=mobile_dashboard_demo"
       assert_includes stdout, "legacy_runtime=yes"
+      assert_includes stdout.lines.map(&:chomp), "url=https://api.docovia.example.test:3113/v2"
     end
   end
 
@@ -69,6 +71,7 @@ class MobileDashboardWorktreeDriverTest < Minitest::Test
 
       assert status.success?, stderr
       assert_includes stdout, "api_url=-"
+      assert_includes stdout.lines.map(&:chomp), "url=-"
       assert_includes stdout, "port=-"
       assert_includes stdout, "running=no"
 

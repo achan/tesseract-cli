@@ -404,7 +404,7 @@ Signatures and Sprung drivers consume their canonical names for Herdr today.
 
 ## Live Worktrees
 
-Show currently running app worktrees, their URLs, and stable changelog URLs:
+Show currently running app worktrees, their memory usage, and URLs:
 
 ```bash
 bin/tesseract live --host tars
@@ -413,18 +413,15 @@ bin/tesseract live --host tars
 Example output:
 
 ```text
-RUNTIME  TARGET                           RSS URL                                      CHANGELOG
-herdr    default:spr/patientnow-integration 512MiB https://app.docovia.tars.achan.bot:3102 https://pages-tars.achan.bot/p/<opaque-token>.html
-herdr    default:sig/general-dev        2.4GiB https://signatures.achan.bot:6204       https://pages-tars.achan.bot/p/<opaque-token>.html
+TARGET                                                RSS URL
+herdr:feature/patientnow-integration                512MiB https://app.docovia.tars.achan.bot:3102
+herdr:feature/general-dev                           2.4GiB https://signatures.achan.bot:6204
 ```
 
 `live` scans each configured app's main clone, asks its selected driver for
-each worktree status, and prints running runtime targets with their URLs. RSS is
+each worktree status, and prints running worktrees with their runtime and URLs. RSS is
 the aggregate resident memory for processes whose current working directory is
-the worktree path or one of its subdirectories. Changelog URLs use the stable
-opaque token registered by the changelog publisher when present, with a
-deterministic path-derived placeholder otherwise. A placeholder can return
-`404` until its changelog is published.
+the worktree path or one of its subdirectories. Targets use `runtime:branch`, with the commit ID for detached HEAD worktrees.
 
 ## Browser Access
 

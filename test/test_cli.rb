@@ -442,7 +442,10 @@ class CLITest < Minitest::Test
     assert_includes script, "export TESSERACT_THEME_GRADIENT_START_COLOR='#09937e'"
     assert_includes script, "export TESSERACT_THEME_TOP_BAR_COLOR='#144c5d'"
     assert_includes script, "set -- 'worktree' 'create' 'demo' 'existing-branch'"
-    assert_includes script, 'repository_command worktree create "$slug" "$@"'
+    assert_includes script, 'create_worktree "$slug" "$@"'
+    assert_includes script, "export TESSERACT_ENV_SHARED_PATH='/home/bot/repos/sprung-app/.env.local'"
+    assert_includes script, "export TESSERACT_PGUSER='bot'"
+    refute_includes script, "repository_command"
     assert_includes script, 'herdr_command workspace create'
     refute_includes script, "docker exec tesseract-postgres"
     assert_empty stderr.string
@@ -825,7 +828,8 @@ class CLITest < Minitest::Test
 
     assert_equal 0, status
     assert_includes script, "set -- 'worktree' 'remove' 'demo' '--force'"
-    assert_includes script, 'repository_command worktree remove "$slug" "$@"'
+    assert_includes script, 'git -C "$MAIN_PATH" worktree remove --force "$path"'
+    refute_includes script, "repository_command"
     assert_includes script, 'herdr_command workspace close "$WORKSPACE_ID"'
     assert_empty stderr.string
   end

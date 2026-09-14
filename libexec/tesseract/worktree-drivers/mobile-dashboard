@@ -228,7 +228,7 @@ emit_herdr_runtime() {
   echo "path=$path"
   echo "api_url=$api_url"
   echo "port=$port"
-  echo "url=http://localhost:$port"
+  echo "url=$api_url"
   echo "running=yes"
   echo "runtime=herdr"
   echo "session=$HERDR_SESSION_NAME"
@@ -300,7 +300,7 @@ start_worktree() {
     if [ "$WORKSPACE_LABEL" != "$identity" ]; then
       herdr_command workspace rename "$WORKSPACE_ID" "$identity" >/dev/null
     fi
-    refresh_workspace_metadata "$WORKSPACE_ID" "http://localhost:$port"
+    refresh_workspace_metadata "$WORKSPACE_ID" "$api_url"
     echo "workspace already running: $identity"
     emit_herdr_runtime "$slug" "$path" "$api_url" "$port" "$WORKSPACE_ID"
     return
@@ -348,11 +348,11 @@ start_worktree() {
   herdr_command pane run "$metro_pane_id" "$metro_command" >/dev/null
   herdr_command pane report-metadata \
     "$root_pane_id" --source tesseract --display-agent "$AGENT_NAME" \
-    --token "url=http://localhost:$port" >/dev/null
+    --token "url=$api_url" >/dev/null
   herdr_command pane report-metadata \
-    "$terminal_pane_id" --source tesseract --token "url=http://localhost:$port" >/dev/null
+    "$terminal_pane_id" --source tesseract --token "url=$api_url" >/dev/null
   herdr_command pane report-metadata \
-    "$metro_pane_id" --source tesseract --token "url=http://localhost:$port" >/dev/null
+    "$metro_pane_id" --source tesseract --token "url=$api_url" >/dev/null
   trap - EXIT
 
   echo "started $identity"
@@ -399,11 +399,7 @@ status_worktree() {
   fi
   echo "api_url=${api_url:--}"
   echo "port=${port:--}"
-  if [ -n "$port" ]; then
-    echo "url=http://localhost:$port"
-  else
-    echo "url=-"
-  fi
+  echo "url=${api_url:--}"
 
   load_workspace "$slug"
   legacy_running=false

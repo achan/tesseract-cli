@@ -361,7 +361,16 @@ class SprungWorktreeDriverTest < Minitest::Test
       wait_for_worker(fixture, 0)
       preparation = File.read(fixture.fetch(:environment).fetch("PREPARE_SCRIPT"))
       harness = <<~'RUBY'
+        require "rake"
         $LOADED_FEATURES << "active_record/tasks/database_tasks.rb"
+        module Rails
+          def self.application
+            self
+          end
+          def self.load_tasks
+            Rake::Task.define_task("dashboard:seed_exams")
+          end
+        end
         module ActiveRecord
           module Tasks
             class DatabaseTasks
@@ -377,6 +386,7 @@ class SprungWorktreeDriverTest < Minitest::Test
               self.count = 0
               self.seed_loader = Object.new
               seed_loader.define_singleton_method(:load_seed) do
+                Rake::Task["dashboard:seed_exams"].invoke
                 DatabaseTasks.count += 1
               end
             end

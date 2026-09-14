@@ -408,6 +408,7 @@ prepare_databases() {
   run_runtime "$path" env RAILS_ENV=test bin/rails db:create
   run_runtime "$path" env RAILS_ENV=development bin/rails runner - <<'RUBY'
 require "active_record/tasks/database_tasks"
+Rails.application.load_tasks
 tasks = ActiveRecord::Tasks::DatabaseTasks
 original_loader = tasks.seed_loader
 seeded = false

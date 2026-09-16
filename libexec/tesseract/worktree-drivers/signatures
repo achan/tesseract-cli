@@ -303,6 +303,11 @@ create_worktree() {
     git -C "$MAIN_PATH" worktree add --no-track -b "$branch" "$path" main
   fi
 
+  if [ -d "$MAIN_PATH/.codex/secrets" ]; then
+    mkdir -p "$path/.codex"
+    cp -a "$MAIN_PATH/.codex/secrets" "$path/.codex/"
+  fi
+
   port=$(choose_port)
   database_name="${DATABASE_PREFIX}_$(sanitize_slug "$slug")"
   write_runtime_env "$path" "$port" "$database_name"

@@ -485,6 +485,10 @@ that driver to the selected host when it runs. A `repository` profile is the
 compatibility option for apps that still provide an executable
 `bin/tesseract`.
 
+New Signatures worktrees copy `.codex/secrets` from the main checkout when the
+directory exists, preserving its permissions. Existing worktrees are left
+unchanged.
+
 For an early-stage repository that only needs Git worktrees, configure the
 central Git-only driver instead:
 

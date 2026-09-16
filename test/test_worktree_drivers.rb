@@ -180,6 +180,9 @@ class WorktreeDriversTest < Minitest::Test
       run_command("git", "-C", main, "config", "user.name", "Test")
       run_command("git", "-C", main, "add", "bin/rails")
       run_command("git", "-C", main, "commit", "-m", "Initial")
+      secrets = File.join(main, ".codex", "secrets")
+      FileUtils.mkdir_p(secrets, mode: 0o700)
+      File.write(File.join(secrets, "slack-token"), "fixture-token\n", perm: 0o600)
       create_executable(File.join(fake_bin, "bundle"), "exit 0\n")
       create_executable(File.join(fake_bin, "createdb"), "printf '%s\\n' \"$*\" >> \"$CREATEDB_LOG\"\n")
       create_executable(File.join(fake_bin, "ss"), "exit 1\n")
@@ -202,6 +205,11 @@ class WorktreeDriversTest < Minitest::Test
       assert status.success?, stderr
       worktree = File.join(worktree_root, "demo")
       assert_includes stdout, "created signatures/demo branch=feature/demo port=6200"
+      copied_secrets = File.join(worktree, ".codex", "secrets")
+      assert_equal "fixture-token\n", File.read(File.join(copied_secrets, "slack-token"))
+      assert_equal 0o700, File.stat(copied_secrets).mode & 0o777
+      assert_equal 0o600, File.stat(File.join(copied_secrets, "slack-token")).mode & 0o777
+      refute_includes stdout + stderr, "fixture-token"
       assert_equal "feature/demo", command_output("git", "-C", worktree, "branch", "--show-current").strip
       development_env = File.read(File.join(worktree, ".env.development.local"))
       assert_includes development_env, "PORT=6200"
